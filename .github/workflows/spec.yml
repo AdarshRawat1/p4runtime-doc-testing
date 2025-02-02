@@ -1,0 +1,31 @@
+name: Build spec
+
+on:
+  push:
+    branches:
+      - main
+      - '*-dev'
+  pull_request:
+    branches:
+      - main
+      - '*-dev'
+
+jobs:
+  asciidoc-lint:
+    runs-on: [ubuntu-latest]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run linter
+      run: |
+        ./tools/asciidoclint.py docs/v1/P4Runtime-Spec.adoc
+
+  build-spec:
+    runs-on: [ubuntu-latest]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build spec
+      run: |
+        make -C docs/tools/
+        docker run -v `pwd`/docs/v1:/usr/src/p4-spec p4lang/p4rt-asciidoc make build_spec_with_images
+        ls docs/v1/P4Runtime-Spec.pdf
+        ls docs/v1/P4Runtime-Spec.html

@@ -1,0 +1,14 @@
+# Emacs
+*~
+.DS_Store
+build
+dist
+*.egg-info
+.eggs
+
+# Rust
+target/
+
+# Bazel
+bazel-*
+*.lock
