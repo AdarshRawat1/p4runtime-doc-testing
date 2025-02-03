@@ -17,20 +17,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Install AsciiDoc and LibreOffice
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y asciidoctor libreoffice  
+          sudo apt-get install -y asciidoctor libreoffice ruby  
+          sudo gem install asciidoctor-pdf asciidoctor-mathematical asciidoctor-bibtex asciidoctor-lists
 
-      - name: Generate HTML
+      - name: Verify Installations
         run: |
-          ls
-          cd docs/v1  # Navigate to the directory containing the AsciiDoc files
-          make  # Run the make command to generate HTML
+          soffice --version
+          asciidoctor --version
+          asciidoctor-pdf --version
+
+      - name: Generate HTML and PDF
+        run: |
+          cd docs/v1
+          make
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: p4runtime/docs/v1/_build/html  
-          keep_files: false  
+          keep_files: false
