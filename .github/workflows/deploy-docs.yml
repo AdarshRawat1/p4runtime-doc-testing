@@ -17,22 +17,34 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Install Dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            asciidoctor libreoffice ruby \
-            libwebp-dev libzstd-dev \
-            libpangocairo-1.0-0 libpango1.0-dev \
-            cmake bison flex 
-            
-      - name: Install Required Ruby Gems
+            cmake flex bison \
+            libglib2.0-dev libcairo2-dev libpango1.0-dev \
+            libxml2-dev libwebp-dev libzstd-dev \
+            libgdk-pixbuf-2.0-dev time libreoffice
+
+      - name: Install Ruby and gems
         run: |
+          sudo apt-get install -y ruby-full
+          echo 'gem: --no-document' | sudo tee /etc/gemrc
+
           sudo gem install \
-            asciidoctor-pdf \
-            asciidoctor-mathematical \
-            asciidoctor-bibtex \
-            asciidoctor-lists
+            asciidoctor nokogiri rghost \
+            asciidoctor-diagram asciidoctor-plantuml \
+            asciidoctor-pdf -v 2.3.19 asciidoctor-pdf-cjk \
+            asciidoctor-lists -v 1.1.2 \
+            coderay pygments.rb thread_safe slim \
+            concurrent-ruby haml tilt \
+            asciidoctor-mathematical asciidoctor-bibtex 
+
+
+          git clone https://github.com/rouge-ruby/rouge
+          cd rouge
+          gem build rouge.gemspec
+          sudo gem install rouge-*.gem
 
 
 
