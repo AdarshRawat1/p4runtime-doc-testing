@@ -1,0 +1,35 @@
+name: Generate HTML and Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main  
+  pull_request:
+    branches:
+      - main  
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install AsciiDoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y asciidoctor
+
+      - name: Generate HTML
+        run: |
+          cd p4runtime/docs/v1  # Navigate to the directory containing the AsciiDoc files
+          make  # Run the make command to generate HTML
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: p4runtime/docs/v1/_build/html  
+          keep_files: false  
