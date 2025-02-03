@@ -21,14 +21,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            asciidoctor libreoffice ruby asciidoctor-pdf \
+            asciidoctor libreoffice ruby \
             libwebp-dev libzstd-dev \
             libpangocairo-1.0-0 libpango1.0-dev \
             cmake bison flex 
-
-      - name: IInstall required Ruby gems
+            
+      - name: Install Required Ruby Gems
         run: |
-          sudo gem install asciidoctor-mathematical asciidoctor-bibtex asciidoctor-lists rouge
+          sudo gem install \
+            asciidoctor-pdf \
+            asciidoctor-mathematical \
+            asciidoctor-bibtex \
+            asciidoctor-lists
+
 
 
       - name: Verify Installations
