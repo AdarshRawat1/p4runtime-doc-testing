@@ -24,7 +24,8 @@ jobs:
 
       - name: Generate HTML
         run: |
-          cd p4runtime/docs/v1  # Navigate to the directory containing the AsciiDoc files
+          ls
+          cd docs/v1  # Navigate to the directory containing the AsciiDoc files
           make  # Run the make command to generate HTML
 
       - name: Deploy to GitHub Pages
