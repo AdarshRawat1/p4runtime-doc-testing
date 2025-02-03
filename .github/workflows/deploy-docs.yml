@@ -31,15 +31,14 @@ jobs:
           sudo apt-get install -y ruby-full
           echo 'gem: --no-document' | sudo tee /etc/gemrc
 
-          sudo gem install \
-            asciidoctor nokogiri rghost \
-            asciidoctor-diagram asciidoctor-plantuml \
-            asciidoctor-pdf -v 2.3.19 asciidoctor-pdf-cjk \
-            asciidoctor-lists -v 1.1.2 \
-            coderay pygments.rb thread_safe slim \
-            concurrent-ruby haml tilt \
-            asciidoctor-mathematical asciidoctor-bibtex 
-
+          sudo gem install asciidoctor nokogiri rghost asciidoctor-diagram \
+                           asciidoctor-plantuml asciidoctor-pdf-cjk \
+                           asciidoctor-lists coderay pygments.rb \
+                           thread_safe slim concurrent-ruby \
+                           haml tilt asciidoctor-mathematical \
+                           asciidoctor-bibtex 
+          sudo gem install asciidoctor-pdf -v 2.3.19
+          sudo gem install asciidoctor-lists -v 1.1.2
 
           git clone https://github.com/rouge-ruby/rouge
           cd rouge
