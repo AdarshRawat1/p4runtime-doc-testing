@@ -131,3 +131,52 @@ else
 
 
 
+
+using System;
+using Oracle.ManagedDataAccess.Client;
+
+class Program
+{
+    static void Main()
+    {
+        string connectionString = "User Id=star;Password=bsc123;Data Source=STA1UKD";
+
+        using (var conn = new OracleConnection(connectionString))
+        {
+            try
+            {
+                conn.Open();
+                Console.WriteLine("Connection successful!");
+
+                string query = @"
+                    SELECT r.feature AS Search, COUNT(1) AS TimesUsed
+                    FROM star_action_audit r
+                    WHERE r.mod_dt > TRUNC(SYSDATE)-30
+                    AND feature_type IN ('SEARCH')
+                    GROUP BY r.feature
+                    ORDER BY TimesUsed DESC";
+
+                using (var cmd = new OracleCommand(query, conn))
+                using (var reader = cmd.ExecuteReader())
+                {
+                    Console.WriteLine("\nSearch | TimesUsed");
+                    Console.WriteLine("-------------------");
+
+                    while (reader.Read())
+                    {
+                        Console.WriteLine($"{reader["Search"],-20} | {reader["TimesUsed"]}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Connection or query failed:");
+                Console.WriteLine(ex.Message);
+            }
+        }
+    }
+}
+
+
+
+
