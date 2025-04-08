@@ -1,0 +1,76 @@
+using Oracle.ManagedDataAccess.Client;
+
+public class UsageStatsService
+{
+    private readonly IConfiguration _config;
+
+    public UsageStatsService(IConfiguration config)
+    {
+        _config = config;
+    }
+
+    public async Task<List<UsageStat>> GetAllStatsAsync()
+    {
+        var result = new List<UsageStat>();
+        string connStr = _config.GetConnectionString("OracleDb");
+
+        using var conn = new OracleConnection(connStr);
+        await conn.OpenAsync();
+
+        using var cmd = new OracleCommand("SELECT * FROM USAGE_STATS", conn);
+        using var reader = await cmd.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            result.Add(new UsageStat
+            {
+                UserId = reader.GetString(0),
+                Action = reader.GetString(1),
+                Timestamp = reader.GetDateTime(2)
+            });
+        }
+
+        return result;
+    }
+}
+
+
+
+
+
+
+@inject UsageStatsService StatsService
+
+<h3>Usage Statistics</h3>
+
+@if (stats == null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <table>
+        <thead><tr><th>User</th><th>Action</th><th>Time</th></tr></thead>
+        <tbody>
+        @foreach (var stat in stats)
+        {
+            <tr>
+                <td>@stat.UserId</td>
+                <td>@stat.Action</td>
+                <td>@stat.Timestamp</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<UsageStat>? stats;
+
+    protected override async Task OnInitializedAsync()
+    {
+        stats = await StatsService.GetAllStatsAsync();
+    }
+}
+
+
