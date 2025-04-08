@@ -1,36 +1,59 @@
-using Oracle.ManagedDataAccess.Client;
+namespace Stats.Models;
 
-public class UsageStatsService
+public class FeatureUsage
+{
+    public string Search { get; set; } = string.Empty;
+    public int TimesUsed { get; set; }
+}
+
+
+
+
+
+
+
+
+using Oracle.ManagedDataAccess.Client;
+using Stats.Models;
+
+namespace Stats.Services;
+
+public class FeatureUsageService
 {
     private readonly IConfiguration _config;
 
-    public UsageStatsService(IConfiguration config)
+    public FeatureUsageService(IConfiguration config)
     {
         _config = config;
     }
 
-    public async Task<List<UsageStat>> GetAllStatsAsync()
+    public async Task<List<FeatureUsage>> GetFeatureUsageAsync()
     {
-        var result = new List<UsageStat>();
-        string connStr = _config.GetConnectionString("OracleDb");
+        var results = new List<FeatureUsage>();
+        var query = @"
+            SELECT r.feature AS ""Search"", COUNT(1) AS ""Times used""
+            FROM star_action_audit r
+            WHERE r.mod_dt > TRUNC(SYSDATE) - 30
+              AND feature_type IN ('SEARCH')
+            GROUP BY r.feature
+            ORDER BY ""Times used"" DESC";
 
-        using var conn = new OracleConnection(connStr);
+        using var conn = new OracleConnection(_config.GetConnectionString("OracleDb"));
         await conn.OpenAsync();
 
-        using var cmd = new OracleCommand("SELECT * FROM USAGE_STATS", conn);
+        using var cmd = new OracleCommand(query, conn);
         using var reader = await cmd.ExecuteReaderAsync();
 
         while (await reader.ReadAsync())
         {
-            result.Add(new UsageStat
+            results.Add(new FeatureUsage
             {
-                UserId = reader.GetString(0),
-                Action = reader.GetString(1),
-                Timestamp = reader.GetDateTime(2)
+                Search = reader.GetString(0),
+                TimesUsed = reader.GetInt32(1)
             });
         }
 
-        return result;
+        return results;
     }
 }
 
@@ -39,38 +62,72 @@ public class UsageStatsService
 
 
 
-@inject UsageStatsService StatsService
 
-<h3>Usage Statistics</h3>
 
-@if (stats == null)
+using Stats.Services;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+builder.Services.AddSingleton<FeatureUsageService>(); // Add this line
+
+var app = builder.Build();
+
+// existing code remains unchanged
+
+
+
+
+
+
+
+
+
+@page "/"
+@inject FeatureUsageService UsageService
+
+<h3>Search Feature Usage (Last 30 Days)</h3>
+
+@if (usages == null)
 {
-    <p>Loading...</p>
+    <p><em>Loading...</em></p>
+}
+else if (!usages.Any())
+{
+    <p>No data found.</p>
 }
 else
 {
-    <table>
-        <thead><tr><th>User</th><th>Action</th><th>Time</th></tr></thead>
-        <tbody>
-        @foreach (var stat in stats)
-        {
+    <table class="table">
+        <thead>
             <tr>
-                <td>@stat.UserId</td>
-                <td>@stat.Action</td>
-                <td>@stat.Timestamp</td>
+                <th>Search</th>
+                <th>Times Used</th>
             </tr>
-        }
+        </thead>
+        <tbody>
+            @foreach (var item in usages)
+            {
+                <tr>
+                    <td>@item.Search</td>
+                    <td>@item.TimesUsed</td>
+                </tr>
+            }
         </tbody>
     </table>
 }
 
 @code {
-    private List<UsageStat>? stats;
+    private List<FeatureUsage>? usages;
 
     protected override async Task OnInitializedAsync()
     {
-        stats = await StatsService.GetAllStatsAsync();
+        usages = await UsageService.GetFeatureUsageAsync();
     }
 }
+
+
+
 
 
