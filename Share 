@@ -1,4 +1,4 @@
-namespace Stats.Models;
+wonamespace Stats.Models;
 
 public class FeatureUsage
 {
@@ -177,6 +177,22 @@ class Program
     }
 }
 
+
+
+
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <runtime>
+    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
+      <dependentAssembly>
+        <assemblyIdentity name="System.Diagnostics.DiagnosticSource" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" />
+        <bindingRedirect oldVersion="0.0.0.0-6.0.2.0" newVersion="6.0.0.0" />
+      </dependentAssembly>
+    </assemblyBinding>
+  </runtime>
+</configuration>
 
 
 
