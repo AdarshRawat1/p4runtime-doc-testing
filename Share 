@@ -1,4 +1,4 @@
-wonamespace Stats.Models;
+huwonamespace Stats.Models;
 
 public class FeatureUsage
 {
@@ -194,5 +194,11 @@ class Program
   </runtime>
 </configuration>
 
+
+<ItemGroup>
+  <None Update="app.config">
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+  </None>
+</ItemGroup>
 
 
