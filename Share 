@@ -1,60 +1,32 @@
-Perfect — you're referring to using TNS (Transparent Network Substrate), which is Oracle's way of defining how to connect to databases using a TNS alias like:
 
-sqlplus username/password@TNS_ALIAS
-
-To replicate that in your Blazor Server app, we’ll use ODP.NET (Oracle.ManagedDataAccess) or ODBC with a TNS-based connection string.
+Great — let’s break it down and get your Oracle connection working in a Blazor Server app step by step. You’ll need to create/edit a few files in your project.
 
 
 ---
 
-✅ Option 1: Using ODP.NET with TNS
+✅ 1. Where to put the connection logic
 
-If you have a tnsnames.ora file with an entry like:
+You can put the connection test in the following file:
 
-STA1UKD =
-  (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = some-host)(PORT = 1521))
-    (CONNECT_DATA =
-      (SERVER = DEDICATED)
-      (SERVICE_NAME = your_service)
-    )
-  )
+File: Pages/FetchData.razor
 
-Then your C# connection string becomes:
+(or create a new one like Pages/OracleTest.razor)
 
-string connStr = "User Id=star;Password=bsc123;Data Source=STA1UKD;";
+Paste this sample code:
 
-And you use this with the Oracle client:
+@page "/oracle-test"
+@inject NavigationManager NavManager
 
-using Oracle.ManagedDataAccess.Client;
+<h3>Oracle DB Connection Test</h3>
 
-using var conn = new OracleConnection(connStr);
-conn.Open();
-
-Make sure:
-
-Oracle.ManagedDataAccess.dll is referenced.
-
-tnsnames.ora is in a directory included in the TNS_ADMIN environment variable or in the default Oracle client path.
-
-
-
----
-
-✅ Option 2: Using ODBC with DSN (less preferred for Oracle)
-
-If a DSN named MyOracleDSN is set up in ODBC Data Source Administrator:
-
-string connStr = "DSN=MyOracleDSN;Uid=star;Pwd=bsc123;";
-using var conn = new OdbcConnection(connStr);
-conn.Open();
-
-But for Oracle, ODP.NET is preferred — it's more reliable and supports advanced Oracle features better.
-
-
----
-
-✅ Minimum Code Sample (ODP.NET)
+@if (!string.IsNullOrEmpty(result))
+{
+    <p>@((MarkupString)result)</p>
+}
+else
+{
+    <p>Loading...</p>
+}
 
 @code {
     private string result;
@@ -63,35 +35,99 @@ But for Oracle, ODP.NET is preferred — it's more reliable and supports advance
     {
         try
         {
-            using var conn = new OracleConnection("User Id=star;Password=bsc123;Data Source=STA1UKD;");
+            using var conn = new Oracle.ManagedDataAccess.Client.OracleConnection(
+                "User Id=star;Password=bsc123;Data Source=STA1UKD;"
+            );
             await conn.OpenAsync();
 
-            using var cmd = new OracleCommand("SELECT feature, COUNT(*) AS usage_count FROM star_action_audit WHERE mod_dt > TRUNC(SYSDATE) - 30 AND feature_type = 'SEARCH' GROUP BY feature", conn);
-            using var reader = await cmd.ExecuteReaderAsync();
+            using var cmd = new Oracle.ManagedDataAccess.Client.OracleCommand(@"
+                SELECT feature, COUNT(*) AS usage_count
+                FROM star_action_audit
+                WHERE mod_dt > TRUNC(SYSDATE) - 30
+                  AND feature_type = 'SEARCH'
+                GROUP BY feature
+                ORDER BY usage_count DESC
+            ", conn);
 
+            using var reader = await cmd.ExecuteReaderAsync();
+            result = "<ul>";
             while (await reader.ReadAsync())
             {
-                result += $"{reader["feature"]}: {reader["usage_count"]}<br/>";
+                result += $"<li>{reader["feature"]}: {reader["usage_count"]}</li>";
             }
+            result += "</ul>";
         }
         catch (Exception ex)
         {
-            result = "Error: " + ex.ToString();
+            result = $"<strong>Error:</strong> {ex.Message}<br/><pre>{ex.StackTrace}</pre>";
         }
     }
 }
 
-This will verify if your TNS-based Oracle connection is working.
+
+---
+
+✅ 2. Where to add the package reference
+
+If you can’t use dotnet add package, manually add this to your .csproj file (usually named like Stats.csproj):
+
+File: Stats.csproj
+
+<ItemGroup>
+  <PackageReference Include="Oracle.ManagedDataAccess" Version="19.17.0" />
+</ItemGroup>
+
+Then rebuild the project. If you're manually copying DLLs instead of using NuGet, I can guide that too.
+
+
+---
+
+✅ 3. If using tnsnames.ora
+
+Place your tnsnames.ora file inside a folder like:
+C:\oracle\network\admin
+
+Set environment variable TNS_ADMIN to that folder path.
+
+Restart Visual Studio / terminal if needed.
+
+
+
+---
+
+✅ 4. Add the page route to navigation
+
+Open:
+
+File: Shared/NavMenu.razor
+
+Add this where the other menu items are:
+
+<NavLink class="nav-link" href="oracle-test">
+    <span class="oi oi-database" aria-hidden="true"></span> Oracle Test
+</NavLink>
+
+
+---
+
+Once this is all set up, run your Blazor app, navigate to /oracle-test and it should show either:
+
+A list of features and usage counts
+
+Or the exact error if connection failed (like missing Oracle DLLs, bad TNS config, etc.)
+
 
 
 ---
 
 Let me know if:
 
-You need help placing the tnsnames.ora
+You can’t install the Oracle package and need a local .dll copy
 
-You want to check if your Blazor server app picks up Oracle DLLs correctly
+You're stuck on any file placement
 
-Or you’d like a minimal working .csproj with everything pre-configured
+You want a ZIP of a working template project
 
+
+I can help tailor based on your system access.
 
