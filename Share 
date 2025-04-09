@@ -1,204 +1,97 @@
-huwonamespace Stats.Models;
+Perfect — you're referring to using TNS (Transparent Network Substrate), which is Oracle's way of defining how to connect to databases using a TNS alias like:
 
-public class FeatureUsage
-{
-    public string Search { get; set; } = string.Empty;
-    public int TimesUsed { get; set; }
-}
+sqlplus username/password@TNS_ALIAS
+
+To replicate that in your Blazor Server app, we’ll use ODP.NET (Oracle.ManagedDataAccess) or ODBC with a TNS-based connection string.
 
 
+---
 
+✅ Option 1: Using ODP.NET with TNS
 
+If you have a tnsnames.ora file with an entry like:
 
+STA1UKD =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = some-host)(PORT = 1521))
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = your_service)
+    )
+  )
 
+Then your C# connection string becomes:
 
+string connStr = "User Id=star;Password=bsc123;Data Source=STA1UKD;";
+
+And you use this with the Oracle client:
 
 using Oracle.ManagedDataAccess.Client;
-using Stats.Models;
 
-namespace Stats.Services;
+using var conn = new OracleConnection(connStr);
+conn.Open();
 
-public class FeatureUsageService
-{
-    private readonly IConfiguration _config;
+Make sure:
 
-    public FeatureUsageService(IConfiguration config)
-    {
-        _config = config;
-    }
+Oracle.ManagedDataAccess.dll is referenced.
 
-    public async Task<List<FeatureUsage>> GetFeatureUsageAsync()
-    {
-        var results = new List<FeatureUsage>();
-        var query = @"
-            SELECT r.feature AS ""Search"", COUNT(1) AS ""Times used""
-            FROM star_action_audit r
-            WHERE r.mod_dt > TRUNC(SYSDATE) - 30
-              AND feature_type IN ('SEARCH')
-            GROUP BY r.feature
-            ORDER BY ""Times used"" DESC";
-
-        using var conn = new OracleConnection(_config.GetConnectionString("OracleDb"));
-        await conn.OpenAsync();
-
-        using var cmd = new OracleCommand(query, conn);
-        using var reader = await cmd.ExecuteReaderAsync();
-
-        while (await reader.ReadAsync())
-        {
-            results.Add(new FeatureUsage
-            {
-                Search = reader.GetString(0),
-                TimesUsed = reader.GetInt32(1)
-            });
-        }
-
-        return results;
-    }
-}
+tnsnames.ora is in a directory included in the TNS_ADMIN environment variable or in the default Oracle client path.
 
 
 
+---
+
+✅ Option 2: Using ODBC with DSN (less preferred for Oracle)
+
+If a DSN named MyOracleDSN is set up in ODBC Data Source Administrator:
+
+string connStr = "DSN=MyOracleDSN;Uid=star;Pwd=bsc123;";
+using var conn = new OdbcConnection(connStr);
+conn.Open();
+
+But for Oracle, ODP.NET is preferred — it's more reliable and supports advanced Oracle features better.
 
 
+---
 
-
-
-using Stats.Services;
-
-var builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddRazorPages();
-builder.Services.AddServerSideBlazor();
-builder.Services.AddSingleton<FeatureUsageService>(); // Add this line
-
-var app = builder.Build();
-
-// existing code remains unchanged
-
-
-
-
-
-
-
-
-
-@page "/"
-@inject FeatureUsageService UsageService
-
-<h3>Search Feature Usage (Last 30 Days)</h3>
-
-@if (usages == null)
-{
-    <p><em>Loading...</em></p>
-}
-else if (!usages.Any())
-{
-    <p>No data found.</p>
-}
-else
-{
-    <table class="table">
-        <thead>
-            <tr>
-                <th>Search</th>
-                <th>Times Used</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var item in usages)
-            {
-                <tr>
-                    <td>@item.Search</td>
-                    <td>@item.TimesUsed</td>
-                </tr>
-            }
-        </tbody>
-    </table>
-}
+✅ Minimum Code Sample (ODP.NET)
 
 @code {
-    private List<FeatureUsage>? usages;
+    private string result;
 
     protected override async Task OnInitializedAsync()
     {
-        usages = await UsageService.GetFeatureUsageAsync();
-    }
-}
-
-
-
-
-
-
-using System;
-using Oracle.ManagedDataAccess.Client;
-
-class Program
-{
-    static void Main()
-    {
-        string connectionString = "User Id=star;Password=bsc123;Data Source=STA1UKD";
-
-        using (var conn = new OracleConnection(connectionString))
+        try
         {
-            try
+            using var conn = new OracleConnection("User Id=star;Password=bsc123;Data Source=STA1UKD;");
+            await conn.OpenAsync();
+
+            using var cmd = new OracleCommand("SELECT feature, COUNT(*) AS usage_count FROM star_action_audit WHERE mod_dt > TRUNC(SYSDATE) - 30 AND feature_type = 'SEARCH' GROUP BY feature", conn);
+            using var reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
             {
-                conn.Open();
-                Console.WriteLine("Connection successful!");
-
-                string query = @"
-                    SELECT r.feature AS Search, COUNT(1) AS TimesUsed
-                    FROM star_action_audit r
-                    WHERE r.mod_dt > TRUNC(SYSDATE)-30
-                    AND feature_type IN ('SEARCH')
-                    GROUP BY r.feature
-                    ORDER BY TimesUsed DESC";
-
-                using (var cmd = new OracleCommand(query, conn))
-                using (var reader = cmd.ExecuteReader())
-                {
-                    Console.WriteLine("\nSearch | TimesUsed");
-                    Console.WriteLine("-------------------");
-
-                    while (reader.Read())
-                    {
-                        Console.WriteLine($"{reader["Search"],-20} | {reader["TimesUsed"]}");
-                    }
-                }
+                result += $"{reader["feature"]}: {reader["usage_count"]}<br/>";
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Connection or query failed:");
-                Console.WriteLine(ex.Message);
-            }
+        }
+        catch (Exception ex)
+        {
+            result = "Error: " + ex.ToString();
         }
     }
 }
 
+This will verify if your TNS-based Oracle connection is working.
 
 
+---
 
+Let me know if:
 
+You need help placing the tnsnames.ora
 
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <runtime>
-    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
-      <dependentAssembly>
-        <assemblyIdentity name="System.Diagnostics.DiagnosticSource" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" />
-        <bindingRedirect oldVersion="0.0.0.0-6.0.2.0" newVersion="6.0.0.0" />
-      </dependentAssembly>
-    </assemblyBinding>
-  </runtime>
-</configuration>
+You want to check if your Blazor server app picks up Oracle DLLs correctly
 
-
-<ItemGroup>
-  <None Update="app.config">
-    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-  </None>
-</ItemGroup>
+Or you’d like a minimal working .csproj with everything pre-configured
 
 
