@@ -1,27 +1,17 @@
-
-Great — let’s break it down and get your Oracle connection working in a Blazor Server app step by step. You’ll need to create/edit a few files in your project.
-
-
----
-
-✅ 1. Where to put the connection logic
-
-You can put the connection test in the following file:
-
-File: Pages/FetchData.razor
-
-(or create a new one like Pages/OracleTest.razor)
-
-Paste this sample code:
-
-@page "/oracle-test"
+@page "/market-events-chart"
 @inject NavigationManager NavManager
+@using ChartJs.Blazor
+@using ChartJs.Blazor.ChartJS
+@using ChartJs.Blazor.Charts
+@using ChartJs.Blazor.Common
+@using ChartJs.Blazor.Util
+@using Oracle.ManagedDataAccess.Client
 
-<h3>Oracle DB Connection Test</h3>
+<h3>Market Event Chart</h3>
 
-@if (!string.IsNullOrEmpty(result))
+@if (chartData != null)
 {
-    <p>@((MarkupString)result)</p>
+    <ChartJsBarChart @ref="barChart" Config="@chartData" />
 }
 else
 {
@@ -29,105 +19,89 @@ else
 }
 
 @code {
-    private string result;
-
+    private BarChart barChart;
+    private BarChartConfig chartData;
+    
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            using var conn = new Oracle.ManagedDataAccess.Client.OracleConnection(
-                "User Id=star;Password=bsc123;Data Source=STA1UKD;"
-            );
+            using var conn = new OracleConnection("Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=eurvlid07179.xmp.net.intra)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=408uk101)));User Id=star;Password=bsc123;");
             await conn.OpenAsync();
 
-            using var cmd = new Oracle.ManagedDataAccess.Client.OracleCommand(@"
-                SELECT feature, COUNT(*) AS usage_count
-                FROM star_action_audit
-                WHERE mod_dt > TRUNC(SYSDATE) - 30
-                  AND feature_type = 'SEARCH'
-                GROUP BY feature
-                ORDER BY usage_count DESC
+            using var cmd = new OracleCommand(@"
+                WITH clearing AS (                                 
+                  SELECT m.con_no, c.clr_org
+                  FROM star_mkt_ops m
+                  JOIN star_clearing c ON c.con_no = m.con_no
+                  WHERE m.mkt_evt_type = 'RPTY' 
+                    AND m.mev_sub_type = 'UNS'
+                    AND m.mod_dt > (SYSDATE - 30)
+                    AND m.status <> 'PROP'
+                    AND m.mkt_evt_type <> 'UNDO'
+                )        
+                SELECT m.mkt_evt_name, COUNT(m.mkt_event_id) AS 'MEVS'
+                FROM (SELECT a.*, CASE
+                                 WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'PNV' THEN 'Partial Remaining Party'
+                                 -- Other conditions here
+                                 ELSE a.mkt_evt_type
+                             END AS mkt_evt_name
+                      FROM star_mkt_ops a
+                ) m
+                JOIN star_contract PARTITION(product_oth) c ON c.con_no = m.con_no
+                WHERE m.mod_dt > (SYSDATE - 30)
+                    AND m.status <> 'PROP'
+                    AND m.mkt_evt_type <> 'UNDO'
+                GROUP BY m.mkt_evt_name
+                ORDER BY 'MEVS' DESC
             ", conn);
 
             using var reader = await cmd.ExecuteReaderAsync();
-            result = "<ul>";
+            var labels = new List<string>();
+            var data = new List<int>();
+
             while (await reader.ReadAsync())
             {
-                result += $"<li>{reader["feature"]}: {reader["usage_count"]}</li>";
+                labels.Add(reader["mkt_evt_name"].ToString());
+                data.Add(Convert.ToInt32(reader["MEVS"]));
             }
-            result += "</ul>";
+
+            chartData = new BarChartConfig
+            {
+                Options = new ChartOptions
+                {
+                    Scales = new Scales
+                    {
+                        YAxes = new List<YAxis>
+                        {
+                            new YAxis
+                            {
+                                Ticks = new Tick
+                                {
+                                    BeginAtZero = true
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            chartData.Data.Labels = labels.ToArray();
+            chartData.Data.Datasets = new List<ChartJs.Blazor.ChartJS.Data.Dataset>
+            {
+                new BarDataset<int>(data)
+                {
+                    Label = "Market Events",
+                    BackgroundColor = ColorUtil.RandomColor(0.7f),
+                    BorderColor = ColorUtil.RandomColor(1f),
+                    BorderWidth = 1
+                }
+            };
         }
         catch (Exception ex)
         {
-            result = $"<strong>Error:</strong> {ex.Message}<br/><pre>{ex.StackTrace}</pre>";
+            // Handle the exception
+            Console.WriteLine($"Error: {ex.Message}");
         }
     }
 }
-
-
----
-
-✅ 2. Where to add the package reference
-
-If you can’t use dotnet add package, manually add this to your .csproj file (usually named like Stats.csproj):
-
-File: Stats.csproj
-
-<ItemGroup>
-  <PackageReference Include="Oracle.ManagedDataAccess" Version="19.17.0" />
-</ItemGroup>
-
-Then rebuild the project. If you're manually copying DLLs instead of using NuGet, I can guide that too.
-
-
----
-
-✅ 3. If using tnsnames.ora
-
-Place your tnsnames.ora file inside a folder like:
-C:\oracle\network\admin
-
-Set environment variable TNS_ADMIN to that folder path.
-
-Restart Visual Studio / terminal if needed.
-
-
-
----
-
-✅ 4. Add the page route to navigation
-
-Open:
-
-File: Shared/NavMenu.razor
-
-Add this where the other menu items are:
-
-<NavLink class="nav-link" href="oracle-test">
-    <span class="oi oi-database" aria-hidden="true"></span> Oracle Test
-</NavLink>
-
-
----
-
-Once this is all set up, run your Blazor app, navigate to /oracle-test and it should show either:
-
-A list of features and usage counts
-
-Or the exact error if connection failed (like missing Oracle DLLs, bad TNS config, etc.)
-
-
-
----
-
-Let me know if:
-
-You can’t install the Oracle package and need a local .dll copy
-
-You're stuck on any file placement
-
-You want a ZIP of a working template project
-
-
-I can help tailor based on your system access.
-
