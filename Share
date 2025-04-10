@@ -1,3 +1,5 @@
+https://excalidraw.com/#room=97c4ac3504c85490180c,sg6ZT4RSYQ6AaE1BdXbz6g
+
 @page "/market-events-chart"
 @inject NavigationManager NavManager
 @using ChartJs.Blazor
