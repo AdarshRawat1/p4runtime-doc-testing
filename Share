@@ -1,122 +1,175 @@
-Yes, let's do it step-by-step clearly. Here's how to add multiple charts to **one page** and make reusable chart components. I'll guide you through precisely how to integrate it into your existing project neatly:
+Below is a **step‑by‑step** tutorial on integrating [**BlazorPlotly**](https://github.com/LayTec-AG/BlazorPlotly) into your **.NET 6** Blazor project and using it to visualize your **(Location, Product, Deals)** query in a **3D** style chart.  
+
+> **Important Note on 3D Bar Charts**:  
+> Plotly.js does **not** natively offer a straightforward “3D bar” type (the way it does for 2D). Typically, you either:
+> 1. Use a **3D surface** plot, or  
+> 2. Use a **3D scatter** plot (placing “cubes” or “squares” at given coordinates).  
+>  
+> If you truly need vertical bar “columns,” you can emulate them with multiple 3D scatter traces—each representing one column. This is more advanced, so here I’ll show a simpler **surface** approach. That said, the overall steps to integrate your data are the same.
 
 ---
 
-## Step 1: **Reusable Chart Component**
+## 1. Install BlazorPlotly
 
-Create a reusable Razor component named `ChartComponent.razor` in your `Shared` or `Components` folder:
+1. In Visual Studio’s **Package Manager Console** (or your .csproj), add:
+   ```bash
+   dotnet add package BlazorPlotly --version 1.7.0
+   ```
+   Version **1.7.x** is confirmed to work on .NET 6.
 
-```razor
-@using ChartJs.Blazor.BarChart
-@using ChartJs.Blazor.Common
+2. In your `wwwroot/index.html` (Blazor WebAssembly) or `Pages/_Host.cshtml` (Blazor Server), ensure the Plotly.js script is referenced. BlazorPlotly docs mention a **_content** path:
+   ```html
+   <script src="_content/BlazorPlotly/plotly-2.11.1.min.js"></script>
+   ```
+   or whichever version is installed. (If you see 404, check the actual script name in your package.)
 
-<BarChart @ref="barChart" Height="@Height" Width="@Width" Class="@CssClass" />
+---
 
-@code {
-    [Parameter] public List<string> Labels { get; set; } = new();
-    [Parameter] public List<double?> Data { get; set; } = new();
-    [Parameter] public string CssClass { get; set; } = "";
-    [Parameter] public int Height { get; set; } = 200;
-    [Parameter] public int Width { get; set; } = 400;
+## 2. Create/Update Your Model (if not done yet)
 
-    private BarChart? barChart;
-    private BarChartOptions barChartOptions = new();
-    private BlazorBootstrap.ChartData chartData = new();
+You need a model that holds each row’s `Location (LocCod)`, `Deals (Total)`, and `Product (PrdTypName)`. If you don’t already have it, create **LocationDeal.cs** in your **Models** folder:
 
-    protected override async Task OnInitializedAsync()
+```csharp
+namespace Star.Models
+{
+    public class LocationDeal
     {
-        var datasets = new List<IChartDataset>
-        {
-            new BarChartDataset
-            {
-                Data = Data,
-                BackgroundColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
-                BorderColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
-                BorderWidth = new List<double> { 1 }
-            }
-        };
-
-        chartData = new BlazorBootstrap.ChartData
-        {
-            Labels = Labels,
-            Datasets = datasets
-        };
-
-        barChartOptions.Responsive = true;
-        barChartOptions.Interaction = new Interaction { Mode = InteractionMode.Y };
-        barChartOptions.IndexAxis = "y";
-        barChartOptions.Plugins.Legend.Display = false;
+        public string LocCod { get; set; } = string.Empty;
+        public int Total { get; set; }
+        public string PrdTypName { get; set; } = string.Empty;
     }
+}
+```
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+---
+
+## 3. Extend Your Data Service
+
+In **IOracleDataService.cs** (interface):
+
+```csharp
+Task<List<LocationDeal>> GetLocationDealsAsync();
+```
+
+In **OracleDataService.cs** (implementation), you already have or will add:
+
+```csharp
+public async Task<List<LocationDeal>> GetLocationDealsAsync()
+{
+    var resultList = new List<LocationDeal>();
+
+    try
     {
-        if (firstRender && barChart != null)
+        using var conn = new OracleConnection(_connectionString);
+        await conn.OpenAsync();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            WITH selection AS (
+                SELECT wrk.mo_loc_cod AS loc_cod
+                     , COUNT(con.con_no) AS total
+                     , DECODE(
+                           con.prd_typ_cod,
+                           'IR1','IR Swap (Fx/Fl)',
+                           'IR2','IR Swap (IMM)',
+                           'IR3','IR Swap (Fl/Fl)',
+                           'CC1','CCY (Fx/Fl)',
+                           'CC2','CCY (Fl/Fl)',
+                           'CC3','CCY (Fx/Fx)',
+                           'FRA','FRA',
+                           'CAP','Cap',
+                           'FLR','Floor',
+                           'CFS','Cap/Floor Straddle',
+                           'COL','Cap/Floor Collar',
+                           'OSP','Swaption Payer',
+                           'OSR','Swaption Receiver',
+                           'OSS','Swaption Straddle',
+                           'DFX','Deposit (Fixed)',
+                           'DFL','Deposit (Float)',
+                           'CSH','Cashflow',
+                           'BOC','Bond Option Call',
+                           'BOP','Bond Option Put',
+                           'BOS','Bond Option Straddle',
+                           'BME','Container BME',
+                           'IL1','Inflation swap (In/Fx)',
+                           'IL2','Inflation swap (In/Fl)',
+                           'IL3','Inflation Fixing Lock (In)',
+                           con.prd_typ_cod
+                     ) AS prd_typ_name
+                FROM star_contract PARTITION(product_oth) con 
+                INNER JOIN star_workflow wrk ON con.con_no = wrk.con_no
+                WHERE con.ptf_no IN (
+                    SELECT ptf_no
+                    FROM crds.ptf
+                    WHERE mkp_cod = 'BNAB'
+                      AND loc_cod = 'PAR'
+                )
+                  AND prd_typ_cod NOT LIKE 'FX_'
+                  AND con.inp_dt >= SYSDATE - 7
+                GROUP BY wrk.mo_loc_cod, con.prd_typ_cod
+            ),
+            locations AS (
+                SELECT DISTINCT loc_cod FROM selection
+            ),
+            otc_prods AS (
+                SELECT DISTINCT prd_typ_name FROM selection
+            )
+            SELECT grid.loc_cod,
+                   NVL(sel.total, 0) AS total,
+                   grid.prd_typ_name
+            FROM (
+                SELECT locations.loc_cod AS loc_cod,
+                       otc_prods.prd_typ_name AS prd_typ_name
+                FROM locations, otc_prods
+            ) grid
+            LEFT OUTER JOIN selection sel
+              ON grid.prd_typ_name = sel.prd_typ_name
+             AND grid.loc_cod = sel.loc_cod
+            ORDER BY grid.loc_cod, grid.prd_typ_name
+        ";
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
         {
-            await barChart.InitializeAsync(chartData, barChartOptions);
+            var loc = reader["loc_cod"]?.ToString() ?? string.Empty;
+            var total = reader["total"] is DBNull ? 0 : Convert.ToInt32(reader["total"]);
+            var prd = reader["prd_typ_name"]?.ToString() ?? string.Empty;
+
+            resultList.Add(new LocationDeal
+            {
+                LocCod = loc,
+                Total = total,
+                PrdTypName = prd
+            });
         }
     }
-}
-```
-
----
-
-## Step 2: **Update `IOracleDataService` and Implementation**
-
-For each query you want to run, add methods to your existing interface and class.
-
-**Example:**
-
-Update **IOracleDataService.cs**:
-```csharp
-Task<List<FeatureUsage>> GetFeatureUsageAsync();
-Task<List<FeatureUsage>> GetAnotherFeatureUsageAsync(); // example new method
-```
-
-Update **OracleDataService.cs** (just implement similarly as your first one):
-```csharp
-public async Task<List<FeatureUsage>> GetAnotherFeatureUsageAsync()
-{
-    var list = new List<FeatureUsage>();
-    using var conn = new OracleConnection(_connectionString);
-    await conn.OpenAsync();
-    using var cmd = conn.CreateCommand();
-    cmd.CommandText = @"
-        SELECT feature, COUNT(*) AS usage_count
-        FROM another_table
-        GROUP BY feature
-        ORDER BY usage_count DESC
-    ";
-
-    using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync())
+    catch (Exception ex)
     {
-        list.Add(new FeatureUsage
-        {
-            Feature = reader["feature"].ToString()!,
-            UsageCount = Convert.ToInt32(reader["usage_count"])
-        });
+        throw new Exception("Error fetching location deals", ex);
     }
-    return list;
+
+    return resultList;
 }
 ```
 
-Repeat this step for as many different queries as you need.
-
 ---
 
-## Step 3: **Render Multiple Charts on One Page**
+## 4. Create a 3D Chart Page with BlazorPlotly
 
-Create (or edit) a Razor page, for example `OracleDashboard.razor`:
+Create a new Razor page, for example **Plotly3D.razor** in your **Pages** folder:
 
 ```razor
-@page "/oracle-dashboard"
+@page "/plotly3d"
 @inject IOracleDataService OracleDataService
+@using Star.Models
+@using BlazorPlotly.Models
+@using BlazorPlotly;
 
-<h3>Oracle Dashboard</h3>
+<h3>3D Chart for (Location, Product, Deals)</h3>
 
 @if (IsLoading)
 {
-    <p>Loading charts...</p>
+    <p>Loading data...</p>
 }
 else if (!string.IsNullOrEmpty(ErrorMessage))
 {
@@ -124,34 +177,44 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
 }
 else
 {
-    <h4>Feature Usage (last 30 days)</h4>
-    <ChartComponent Labels="@featureLabels" Data="@featureData" CssClass="mb-4" />
-
-    <h4>Another Feature Usage</h4>
-    <ChartComponent Labels="@anotherFeatureLabels" Data="@anotherFeatureData" CssClass="mb-4" />
+    <PlotlyChart @ref="chart" />
 }
 
 @code {
+    private PlotlyChart? chart;
     private bool IsLoading = true;
     private string? ErrorMessage;
 
-    private List<string> featureLabels = new();
-    private List<double?> featureData = new();
-
-    private List<string> anotherFeatureLabels = new();
-    private List<double?> anotherFeatureData = new();
+    // We'll store distinct X & Y categories, and a 2D array for Z
+    private List<string> distinctLocations = new();
+    private List<string> distinctProducts = new();
+    private double[,]? zMatrix;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            var featureUsage = await OracleDataService.GetFeatureUsageAsync();
-            featureLabels = featureUsage.Select(x => x.Feature).ToList();
-            featureData = featureUsage.Select(x => (double?)x.UsageCount).ToList();
+            var data = await OracleDataService.GetLocationDealsAsync();
 
-            var anotherFeatureUsage = await OracleDataService.GetAnotherFeatureUsageAsync();
-            anotherFeatureLabels = anotherFeatureUsage.Select(x => x.Feature).ToList();
-            anotherFeatureData = anotherFeatureUsage.Select(x => (double?)x.UsageCount).ToList();
+            // 1. Distinct X (Locations) and Y (Products)
+            distinctLocations = data.Select(d => d.LocCod).Distinct().OrderBy(x => x).ToList();
+            distinctProducts = data.Select(d => d.PrdTypName).Distinct().OrderBy(p => p).ToList();
+
+            // 2. Build a 2D matrix for Z (the "Deals" count)
+            //    dimension: [products.Count, locations.Count]
+            zMatrix = new double[distinctProducts.Count, distinctLocations.Count];
+
+            for (int i = 0; i < distinctProducts.Count; i++)
+            {
+                for (int j = 0; j < distinctLocations.Count; j++)
+                {
+                    var match = data.FirstOrDefault(d =>
+                        d.PrdTypName == distinctProducts[i] &&
+                        d.LocCod == distinctLocations[j]);
+
+                    zMatrix[i, j] = match?.Total ?? 0;
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -162,46 +225,134 @@ else
             IsLoading = false;
         }
     }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender && chart != null && string.IsNullOrEmpty(ErrorMessage))
+        {
+            CreatePlot();
+        }
+    }
+
+    private void CreatePlot()
+    {
+        if (zMatrix == null) return;
+
+        // This trace uses a "surface" type, which is a 3D surface in Plotly.
+        var trace = new Trace
+        {
+            Name = "Deals Surface",
+            Type = PlotlyChartType.Surface,  // 3D surface
+            X = distinctLocations.ToArray(),
+            Y = distinctProducts.ToArray(),
+            Z = zMatrix  // 2D array for surface
+        };
+
+        var data = new List<Trace> { trace };
+
+        // Define the layout with a 3D scene
+        var layout = new Layout
+        {
+            Title = "Location vs Product vs Deals",
+            Scene = new Scene
+            {
+                XAxis = new Axis
+                {
+                    Title = "Location",
+                },
+                YAxis = new Axis
+                {
+                    Title = "Product",
+                },
+                ZAxis = new Axis
+                {
+                    Title = "Deals",
+                }
+            }
+        };
+
+        // Render in our <PlotlyChart @ref="chart" />
+        chart?.SetFigure(new Config(), data, layout);
+    }
 }
 ```
 
+### Explanation
+
+1. **Fetch Data** in `OnInitializedAsync()` → store distinct X and Y categories, build the 2D `zMatrix`.
+2. **OnAfterRender** calls `CreatePlot()` after first render. 
+3. **CreatePlot()** sets up:
+   - A `Trace` of `Type = PlotlyChartType.Surface`, which is a 3D surface plot in Plotly.
+   - `X` and `Y` are string arrays (distinct locations and products).
+   - `Z` is a 2D numeric array with the same dimension as `(Y, X)`.
+4. The **PlotlyChart** is referenced by `chart?` and we call `SetFigure(...)` with a layout that has a 3D scene.
+
+> **Result**: A 3D “surface” plot where the X axis is `Location`, the Y axis is `Product`, and the Z axis is `Deals`.
+
 ---
 
-## How to Continue for More Queries:
+## 5. (Optional) Emulate 3D “Bars”
 
-- Add more service methods.
-- Copy and paste another chart block on your Razor page (`ChartComponent`), simply passing in new labels and data.
+A real “3D bar chart” in Plotly requires advanced usage of **multiple 3D scatter traces**—one trace per bar. Each bar is basically a stacked shape in 3D space. If you want that actual “columns rising from a floor,” see [Plotly’s official 3D bar examples](https://plotly.com/python/3d-bar-charts/) or do something like:
 
-Example:
+```csharp
+var allTraces = new List<Trace>();
 
-```razor
-<h4>Yet Another Chart</h4>
-<ChartComponent Labels="@thirdLabels" Data="@thirdData" CssClass="mb-4" />
+for (int i = 0; i < distinctProducts.Count; i++)
+{
+    for (int j = 0; j < distinctLocations.Count; j++)
+    {
+        double deals = zMatrix[i, j];
+        if (deals <= 0) continue;
+
+        // We'll represent each 'bar' as a small 3D scatter,
+        // or a 'cube' marker at (x, y, z).
+        var barTrace = new Trace
+        {
+            Type = PlotlyChartType.Scatter3D,
+            Mode = "markers",
+            X = new object[] { distinctLocations[j] },
+            Y = new object[] { distinctProducts[i] },
+            Z = new object[] { deals },
+            Marker = new Marker
+            {
+                Size = 10,        // Adjust as needed
+                Symbol = "square" // or "circle"
+            }
+        };
+        allTraces.Add(barTrace);
+    }
+}
 ```
 
----
-
-## Estimated Time:
-
-- Setting up your reusable component: **~15-20 mins** *(one-time effort)*
-- Adding each additional query: **~10-15 mins** *(copy-paste-modify the service)*
-- Adding another chart to your dashboard page: **~5 mins** *(copy-paste & tweak)*
+- Then pass `allTraces` instead of a single trace to your chart’s `.SetFigure(...)`.  
+- You’ll see many squares or circles “floating” in 3D. This is more “scatter plot with 3D markers” than perfect columns, but it’s the typical approach with Plotly.
 
 ---
 
-## Why this approach?
+## 6. Add a NavLink / Test
 
-- **Reusable components:**  
-  Easy to maintain, no duplicate code, and clear structure.
+Finally, add a link in your NavMenu (or wherever) to reach `/plotly3d`. For example, in **Shared/NavMenu.razor**:
 
-- **Single-page dashboard:**  
-  Improved user experience; easily scalable to more data.
+```html
+<NavLink class="nav-link" href="/plotly3d">
+    <span class="oi oi-graph" aria-hidden="true"></span> 3D Chart
+</NavLink>
+```
 
-- **Clean separation:**  
-  Each part (database access, business logic, presentation) stays neatly organized.
+Now run your app, navigate to **`/plotly3d`**, and you should see your 3D surface (or scatter) chart generated from the **Location, Product, Deals** query data.
 
 ---
 
-**You can now easily scale your dashboard to include any number of SQL queries and visualizations.**
+## Summary
 
-Would you like help integrating the next chart specifically, or is this clear enough to proceed comfortably?
+1. **Install BlazorPlotly** (1.7.x) and reference the Plotly script.  
+2. **Add a model** for your data (`LocationDeal`).  
+3. **Extend your data service** (`GetLocationDealsAsync()`) to run your `WITH selection ...` query and return a list.  
+4. **Create a new Razor page** (`Plotly3D.razor`) that:
+   - Fetches data  
+   - Builds the `X`, `Y`, and `Z` arrays/matrix  
+   - Calls `PlotlyChart.SetFigure(...)` with a 3D “surface” or “scatter3d” trace  
+5. **Navigate** to `/plotly3d` in your browser to see the result.
+
+This approach cleanly integrates into your existing project and allows you to visually represent your query’s `Location`, `Product`, and `Deals` in a 3D Plotly chart. Adjust marker sizes, color scales, or layout as desired to match your styling.
