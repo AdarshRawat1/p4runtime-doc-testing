@@ -4,7 +4,7 @@
 
 @if (IsLoading)
 {
-    <PlaceholderContainer Animation="PlaceholderAnimation.Glow">
+    <PlaceholderContainer Animation="PlaceholderAnimation.Wave">
         <Placeholder Width="PlaceholderWidth.Col12" Class="mb-2" />
         <Placeholder Width="PlaceholderWidth.Col12" Class="mb-2" />
         <Placeholder Width="PlaceholderWidth.Col12" Class="mb-2" />
@@ -16,22 +16,27 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
 }
 else
 {
-    <Chart Data="@chartData" ChartType="ChartType.Bar" />
+    <!-- Key Point: Use TItem="double" matching ChartData<double> -->
+    <Chart TItem="double" Data="@chartData" ChartType="ChartType.Bar" />
 }
 
 @code {
     private bool IsLoading = true;
     private string? ErrorMessage;
-    private ChartData chartData = new ChartData();
 
-    [Inject] public IOracleDataService DataService { get; set; } = default!;
+    /* Must be ChartData<double> to match TItem="double" above */
+    private ChartData<double> chartData = new();
+
+    [Inject]
+    public IOracleDataService DataService { get; set; } = default!;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            var trades = await DataService.GetOtcProductTradesAsync();
-            if (trades == null || trades.Count == 0)
+            // Update the method name to match what actually exists in your interface/service:
+            var trades = await DataService.GetOtcProductTradeAsync(); 
+            if (trades is null || trades.Count == 0)
             {
                 ErrorMessage = "No data found for OTC Product Trades.";
                 return;
@@ -40,7 +45,8 @@ else
             var labels = trades.Select(t => t.ProductName).ToList();
             var values = trades.Select(t => (double)t.TotalTrades).ToList();
 
-            var dataset = new ChartDataset
+            /* Must be ChartDataset<double> to match ChartData<double> */
+            var dataset = new ChartDataset<double>
             {
                 Label = "Trades (Last 7 Days)",
                 Data = values,
@@ -49,7 +55,8 @@ else
             };
 
             chartData.Labels = labels;
-            chartData.Datasets = new List<ChartDataset> { dataset };
+            /* Must be List<ChartDataset<double>> or List<IChartDataset<double>> */
+            chartData.Datasets = new List<ChartDataset<double>> { dataset };
         }
         catch (Exception ex)
         {
