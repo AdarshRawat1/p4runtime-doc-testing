@@ -1,6 +1,8 @@
+@using Star.Models
+@using Star.Services
 @using BlazorBootstrap
 
-@if (!dataLoaded)
+@if (IsLoading)
 {
     <PlaceholderContainer Animation="PlaceholderAnimation.Glow">
         <Placeholder Width="PlaceholderWidth.Col12" Class="mb-2" />
@@ -8,33 +10,54 @@
         <Placeholder Width="PlaceholderWidth.Col12" Class="mb-2" />
     </PlaceholderContainer>
 }
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <Alert Color="AlertColor.Danger">@ErrorMessage</Alert>
+}
 else
 {
-    <BarChart @ref="barChart" Width="800" Height="400" />
+    <Chart Data="@chartData" ChartType="ChartType.Bar" />
 }
 
 @code {
-    private BarChart barChart = default!;
-    private ChartData chartData = new();
-    private BarChartOptions barChartOptions = new();
-    private bool dataLoaded = false;
+    private bool IsLoading = true;
+    private string? ErrorMessage;
+    private ChartData chartData = new ChartData();
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    [Inject] public IOracleDataService DataService { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
     {
-        if (firstRender)
+        try
         {
-            chartData.Labels = new List<string> { "Product A", "Product B", "Product C" };
-            var dataset = new BarChartDataset
+            var trades = await DataService.GetOtcProductTradesAsync();
+            if (trades == null || trades.Count == 0)
             {
-                Label = "Sales",
-                Data = new List<double> { 15000, 23000, 18000 },
-                BackgroundColor = ColorBuilder.CategoricalSixColors
+                ErrorMessage = "No data found for OTC Product Trades.";
+                return;
+            }
+
+            var labels = trades.Select(t => t.ProductName).ToList();
+            var values = trades.Select(t => (double)t.TotalTrades).ToList();
+
+            var dataset = new ChartDataset
+            {
+                Label = "Trades (Last 7 Days)",
+                Data = values,
+                BackgroundColor = "rgba(54, 162, 235, 0.6)",
+                BorderColor = "rgba(54, 162, 235, 1.0)"
             };
-            chartData.Datasets = new List<IChartDataset> { dataset };
-            barChartOptions.Responsive = true;
-            await barChart.InitializeAsync(chartData, barChartOptions);
-            dataLoaded = true;
-            StateHasChanged();
+
+            chartData.Labels = labels;
+            chartData.Datasets = new List<ChartDataset> { dataset };
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
         }
     }
 }
