@@ -60,3 +60,126 @@ namespace YourProject.Services
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+{
+  "ConnectionStrings": {
+    "OracleDb": "Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=yourhost)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=YourService)));User Id=yourUser;Password=yourPassword;"
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+@page "/oracle-chart"
+@using YourProject.Models
+@using YourProject.Services
+@using ChartJs.Blazor.BarChart
+@using ChartJs.Blazor.Common
+@inject IOracleDataService OracleDataService
+
+<h3>Feature Usage Chart</h3>
+
+@if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@((MarkupString)ErrorMessage)</div>
+}
+else if (IsLoading)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <BarChart @ref="barChart" Height="200" Class="mb-4" />
+}
+
+@code {
+    private BarChart? barChart;
+    private BarChartOptions barChartOptions = new BarChartOptions();
+    private BlazorBootstrap.ChartData chartData = new BlazorBootstrap.ChartData();
+    private bool IsLoading = true;
+    private string? ErrorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Fetch data from the Oracle DB via the data service
+            var featureUsageData = await OracleDataService.GetFeatureUsageAsync();
+
+            if (featureUsageData == null || featureUsageData.Count == 0)
+            {
+                ErrorMessage = "No data available.";
+                return;
+            }
+
+            // Map the data to chart labels and dataset
+            var labels = featureUsageData.ConvertAll(item => item.Feature);
+            var data = featureUsageData.ConvertAll(item => (double?)item.UsageCount);
+
+            var datasets = new List<IChartDataset>
+            {
+                new BarChartDataset
+                {
+                    Data = data,
+                    BackgroundColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
+                    BorderColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
+                    BorderWidth = new List<double> { 1 }
+                }
+            };
+
+            chartData = new BlazorBootstrap.ChartData
+            {
+                Labels = labels,
+                Datasets = datasets
+            };
+
+            // Configure chart options
+            barChartOptions = new BarChartOptions
+            {
+                Responsive = true,
+                Interaction = new Interaction { Mode = InteractionMode.Y },
+                IndexAxis = "y"
+            };
+            barChartOptions.Plugins.Legend.Display = false;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"<strong>Error:</strong> {ex.Message}<br/><pre>{ex.StackTrace}</pre>";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && barChart != null && string.IsNullOrEmpty(ErrorMessage))
+        {
+            await barChart.InitializeAsync(chartData, barChartOptions);
+        }
+        await base.OnAfterRenderAsync(firstRender);
+    }
+}
