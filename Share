@@ -1,13 +1,12 @@
-@using Star.Models
-@using Star.Services
 @using BlazorBootstrap
+@using Star.Services
+@using Star.Models
 
 @if (IsLoading)
 {
-    <PlaceholderContainer Animation="PlaceholderAnimation.Wave">
-        <Placeholder Width="PlaceholderWidth.Col12" Class="mb-2" />
-        <Placeholder Width="PlaceholderWidth.Col12" Class="mb-2" />
-        <Placeholder Width="PlaceholderWidth.Col12" Class="mb-2" />
+    <PlaceholderContainer Animation="PlaceholderAnimation.Glow">
+        <Placeholder Width="PlaceholderWidth.Col12" />
+        <Placeholder Width="PlaceholderWidth.Col12" />
     </PlaceholderContainer>
 }
 else if (!string.IsNullOrEmpty(ErrorMessage))
@@ -16,37 +15,26 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
 }
 else
 {
-    <!-- Key Point: Use TItem="double" matching ChartData<double> -->
-    <Chart TItem="double" Data="@chartData" ChartType="ChartType.Bar" />
+    <Chart Data="@chartData" ChartType="ChartType.Bar" />
 }
 
 @code {
     private bool IsLoading = true;
     private string? ErrorMessage;
+    private ChartData chartData = new();
 
-    /* Must be ChartData<double> to match TItem="double" above */
-    private ChartData<double> chartData = new();
-
-    [Inject]
-    public IOracleDataService DataService { get; set; } = default!;
+    [Inject] public IOracleDataService DataService { get; set; } = default!;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            // Update the method name to match what actually exists in your interface/service:
-            var trades = await DataService.GetOtcProductTradeAsync(); 
-            if (trades is null || trades.Count == 0)
-            {
-                ErrorMessage = "No data found for OTC Product Trades.";
-                return;
-            }
+            var trades = await DataService.GetOtcProductTradeAsync();
 
             var labels = trades.Select(t => t.ProductName).ToList();
             var values = trades.Select(t => (double)t.TotalTrades).ToList();
 
-            /* Must be ChartDataset<double> to match ChartData<double> */
-            var dataset = new ChartDataset<double>
+            var dataset = new BlazorBootstrap.ChartDataset
             {
                 Label = "Trades (Last 7 Days)",
                 Data = values,
@@ -55,8 +43,7 @@ else
             };
 
             chartData.Labels = labels;
-            /* Must be List<ChartDataset<double>> or List<IChartDataset<double>> */
-            chartData.Datasets = new List<ChartDataset<double>> { dataset };
+            chartData.Datasets = new List<BlazorBootstrap.ChartDataset> { dataset };
         }
         catch (Exception ex)
         {
