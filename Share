@@ -1,185 +1,207 @@
-using Oracle.ManagedDataAccess.Client;
-using YourProject.Models;
-using Microsoft.Extensions.Configuration;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
+Yes, let's do it step-by-step clearly. Here's how to add multiple charts to **one page** and make reusable chart components. I'll guide you through precisely how to integrate it into your existing project neatly:
 
-namespace YourProject.Services
-{
-    public class OracleDataService : IOracleDataService
+---
+
+## Step 1: **Reusable Chart Component**
+
+Create a reusable Razor component named `ChartComponent.razor` in your `Shared` or `Components` folder:
+
+```razor
+@using ChartJs.Blazor.BarChart
+@using ChartJs.Blazor.Common
+
+<BarChart @ref="barChart" Height="@Height" Width="@Width" Class="@CssClass" />
+
+@code {
+    [Parameter] public List<string> Labels { get; set; } = new();
+    [Parameter] public List<double?> Data { get; set; } = new();
+    [Parameter] public string CssClass { get; set; } = "";
+    [Parameter] public int Height { get; set; } = 200;
+    [Parameter] public int Width { get; set; } = 400;
+
+    private BarChart? barChart;
+    private BarChartOptions barChartOptions = new();
+    private BlazorBootstrap.ChartData chartData = new();
+
+    protected override async Task OnInitializedAsync()
     {
-        private readonly string _connectionString;
-
-        public OracleDataService(IConfiguration configuration)
+        var datasets = new List<IChartDataset>
         {
-            _connectionString = configuration.GetConnectionString("OracleDb") 
-                ?? throw new ArgumentNullException("Oracle connection string is not configured.");
-        }
+            new BarChartDataset
+            {
+                Data = Data,
+                BackgroundColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
+                BorderColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
+                BorderWidth = new List<double> { 1 }
+            }
+        };
 
-        public async Task<List<FeatureUsage>> GetFeatureUsageAsync()
+        chartData = new BlazorBootstrap.ChartData
         {
-            var featureUsageList = new List<FeatureUsage>();
+            Labels = Labels,
+            Datasets = datasets
+        };
 
-            try
-            {
-                using var conn = new OracleConnection(_connectionString);
-                await conn.OpenAsync();
+        barChartOptions.Responsive = true;
+        barChartOptions.Interaction = new Interaction { Mode = InteractionMode.Y };
+        barChartOptions.IndexAxis = "y";
+        barChartOptions.Plugins.Legend.Display = false;
+    }
 
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
-                    SELECT feature, COUNT(*) AS usage_count
-                    FROM star_action_audit
-                    WHERE mod_dt > TRUNC(SYSDATE) - 30
-                      AND feature_type = 'SEARCH'
-                    GROUP BY feature
-                    ORDER BY usage_count DESC
-                ";
-
-                using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    var feature = reader["feature"]?.ToString() ?? string.Empty;
-                    var usageCount = reader["usage_count"] != DBNull.Value 
-                        ? Convert.ToInt32(reader["usage_count"]) : 0;
-
-                    featureUsageList.Add(new FeatureUsage 
-                    { 
-                        Feature = feature, 
-                        UsageCount = usageCount 
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                // Log the exception if desired
-                throw new Exception("Error fetching data from Oracle DB", ex);
-            }
-
-            return featureUsageList;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && barChart != null)
+        {
+            await barChart.InitializeAsync(chartData, barChartOptions);
         }
     }
 }
+```
 
+---
 
+## Step 2: **Update `IOracleDataService` and Implementation**
 
+For each query you want to run, add methods to your existing interface and class.
 
+**Example:**
 
+Update **IOracleDataService.cs**:
+```csharp
+Task<List<FeatureUsage>> GetFeatureUsageAsync();
+Task<List<FeatureUsage>> GetAnotherFeatureUsageAsync(); // example new method
+```
 
-
-
-
-
-
-
-
-
-
+Update **OracleDataService.cs** (just implement similarly as your first one):
+```csharp
+public async Task<List<FeatureUsage>> GetAnotherFeatureUsageAsync()
 {
-  "ConnectionStrings": {
-    "OracleDb": "Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=yourhost)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=YourService)));User Id=yourUser;Password=yourPassword;"
-  }
+    var list = new List<FeatureUsage>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT feature, COUNT(*) AS usage_count
+        FROM another_table
+        GROUP BY feature
+        ORDER BY usage_count DESC
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        list.Add(new FeatureUsage
+        {
+            Feature = reader["feature"].ToString()!,
+            UsageCount = Convert.ToInt32(reader["usage_count"])
+        });
+    }
+    return list;
 }
+```
 
+Repeat this step for as many different queries as you need.
 
+---
 
+## Step 3: **Render Multiple Charts on One Page**
 
+Create (or edit) a Razor page, for example `OracleDashboard.razor`:
 
-
-
-
-
-
-
-
-@page "/oracle-chart"
-@using YourProject.Models
-@using YourProject.Services
-@using ChartJs.Blazor.BarChart
-@using ChartJs.Blazor.Common
+```razor
+@page "/oracle-dashboard"
 @inject IOracleDataService OracleDataService
 
-<h3>Feature Usage Chart</h3>
+<h3>Oracle Dashboard</h3>
 
-@if (!string.IsNullOrEmpty(ErrorMessage))
+@if (IsLoading)
 {
-    <div class="alert alert-danger">@((MarkupString)ErrorMessage)</div>
+    <p>Loading charts...</p>
 }
-else if (IsLoading)
+else if (!string.IsNullOrEmpty(ErrorMessage))
 {
-    <p>Loading...</p>
+    <div class="alert alert-danger">@ErrorMessage</div>
 }
 else
 {
-    <BarChart @ref="barChart" Height="200" Class="mb-4" />
+    <h4>Feature Usage (last 30 days)</h4>
+    <ChartComponent Labels="@featureLabels" Data="@featureData" CssClass="mb-4" />
+
+    <h4>Another Feature Usage</h4>
+    <ChartComponent Labels="@anotherFeatureLabels" Data="@anotherFeatureData" CssClass="mb-4" />
 }
 
 @code {
-    private BarChart? barChart;
-    private BarChartOptions barChartOptions = new BarChartOptions();
-    private BlazorBootstrap.ChartData chartData = new BlazorBootstrap.ChartData();
     private bool IsLoading = true;
     private string? ErrorMessage;
+
+    private List<string> featureLabels = new();
+    private List<double?> featureData = new();
+
+    private List<string> anotherFeatureLabels = new();
+    private List<double?> anotherFeatureData = new();
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            // Fetch data from the Oracle DB via the data service
-            var featureUsageData = await OracleDataService.GetFeatureUsageAsync();
+            var featureUsage = await OracleDataService.GetFeatureUsageAsync();
+            featureLabels = featureUsage.Select(x => x.Feature).ToList();
+            featureData = featureUsage.Select(x => (double?)x.UsageCount).ToList();
 
-            if (featureUsageData == null || featureUsageData.Count == 0)
-            {
-                ErrorMessage = "No data available.";
-                return;
-            }
-
-            // Map the data to chart labels and dataset
-            var labels = featureUsageData.ConvertAll(item => item.Feature);
-            var data = featureUsageData.ConvertAll(item => (double?)item.UsageCount);
-
-            var datasets = new List<IChartDataset>
-            {
-                new BarChartDataset
-                {
-                    Data = data,
-                    BackgroundColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
-                    BorderColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
-                    BorderWidth = new List<double> { 1 }
-                }
-            };
-
-            chartData = new BlazorBootstrap.ChartData
-            {
-                Labels = labels,
-                Datasets = datasets
-            };
-
-            // Configure chart options
-            barChartOptions = new BarChartOptions
-            {
-                Responsive = true,
-                Interaction = new Interaction { Mode = InteractionMode.Y },
-                IndexAxis = "y"
-            };
-            barChartOptions.Plugins.Legend.Display = false;
+            var anotherFeatureUsage = await OracleDataService.GetAnotherFeatureUsageAsync();
+            anotherFeatureLabels = anotherFeatureUsage.Select(x => x.Feature).ToList();
+            anotherFeatureData = anotherFeatureUsage.Select(x => (double?)x.UsageCount).ToList();
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"<strong>Error:</strong> {ex.Message}<br/><pre>{ex.StackTrace}</pre>";
+            ErrorMessage = ex.Message;
         }
         finally
         {
             IsLoading = false;
         }
     }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender && barChart != null && string.IsNullOrEmpty(ErrorMessage))
-        {
-            await barChart.InitializeAsync(chartData, barChartOptions);
-        }
-        await base.OnAfterRenderAsync(firstRender);
-    }
 }
+```
+
+---
+
+## How to Continue for More Queries:
+
+- Add more service methods.
+- Copy and paste another chart block on your Razor page (`ChartComponent`), simply passing in new labels and data.
+
+Example:
+
+```razor
+<h4>Yet Another Chart</h4>
+<ChartComponent Labels="@thirdLabels" Data="@thirdData" CssClass="mb-4" />
+```
+
+---
+
+## Estimated Time:
+
+- Setting up your reusable component: **~15-20 mins** *(one-time effort)*
+- Adding each additional query: **~10-15 mins** *(copy-paste-modify the service)*
+- Adding another chart to your dashboard page: **~5 mins** *(copy-paste & tweak)*
+
+---
+
+## Why this approach?
+
+- **Reusable components:**  
+  Easy to maintain, no duplicate code, and clear structure.
+
+- **Single-page dashboard:**  
+  Improved user experience; easily scalable to more data.
+
+- **Clean separation:**  
+  Each part (database access, business logic, presentation) stays neatly organized.
+
+---
+
+**You can now easily scale your dashboard to include any number of SQL queries and visualizations.**
+
+Would you like help integrating the next chart specifically, or is this clear enough to proceed comfortably?
