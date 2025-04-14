@@ -1,6 +1,7 @@
 @using BlazorBootstrap
 @using Star.Services
 @using Star.Models
+@using Microsoft.AspNetCore.Components
 
 @if (IsLoading)
 {
@@ -15,15 +16,18 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
 }
 else
 {
-    <Chart Data="@chartData" ChartType="ChartType.Bar" />
+    <BarChart @ref="barChart" Width="800" Height="400" />
 }
 
 @code {
     private bool IsLoading = true;
     private string? ErrorMessage;
     private ChartData chartData = new();
+    private BarChartOptions barChartOptions = new();
+    private BarChart barChart = default!;
 
-    [Inject] public IOracleDataService DataService { get; set; } = default!;
+    [Inject]
+    public IOracleDataService DataService { get; set; } = default!;
 
     protected override async Task OnInitializedAsync()
     {
@@ -34,16 +38,22 @@ else
             var labels = trades.Select(t => t.ProductName).ToList();
             var values = trades.Select(t => (double)t.TotalTrades).ToList();
 
-            var dataset = new BlazorBootstrap.ChartDataset
+            var dataset = new BarChartDataset
             {
                 Label = "Trades (Last 7 Days)",
                 Data = values,
-                BackgroundColor = "rgba(54, 162, 235, 0.6)",
-                BorderColor = "rgba(54, 162, 235, 1.0)"
+                BackgroundColor = new List<string> { "rgba(54, 162, 235, 0.6)" },
+                BorderColor = new List<string> { "rgba(54, 162, 235, 1.0)" },
+                BorderWidth = new List<int> { 1 }
             };
 
             chartData.Labels = labels;
-            chartData.Datasets = new List<BlazorBootstrap.ChartDataset> { dataset };
+            chartData.Datasets = new List<IChartDataset> { dataset };
+
+            barChartOptions.Responsive = true;
+            barChartOptions.Plugins.Legend.Display = true;
+
+            await barChart.InitializeAsync(chartData, barChartOptions);
         }
         catch (Exception ex)
         {
