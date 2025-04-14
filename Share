@@ -1,288 +1,253 @@
-Below is a **step-by-step** guide showing how to integrate this **new query** into your **existing Blazor page** (the one currently displaying your “Feature Usage Chart”). We’ll create a **new model**, **new service method**, and **add a second chart** on the **same page**. I’ll track the file changes explicitly in a “File Changes” section at the end.
+Below is a **step‑by‑step** guide on how to integrate this SQL query into your Blazor project and render a **bar chart** showing “OTC product types booked in last 7 days.” I’ll track all file changes precisely so you know exactly where to put each piece of code.
 
 ---
 
-## 1. Create or Update the Model
+# 1. Create or Update the **Model**
 
-We’ll define a model named **`ProductTrade`** for rows returned by your new query (each row has `prd_typ_name` and `total_trades`).
+### **File**: `ProductTrade.cs`  
+**Location**: `Star/Models` folder (or wherever you keep models)
 
-**File: `Models/ProductTrade.cs`**  
 ```csharp
 namespace Star.Models
 {
     public class ProductTrade
     {
-        public string PrdTypName { get; set; } = string.Empty;
+        public string ProductName { get; set; } = string.Empty;
         public int TotalTrades { get; set; }
     }
 }
 ```
 
+**Why**:  
+- This model holds the result of `prd_typ_name` (as `ProductName`) and `"total_trades"` (as `TotalTrades`).
+
 ---
 
-## 2. Extend Your Data Service Interface
+# 2. Update the Data Service Interface
 
-In your existing **`IOracleDataService.cs`** file, add a method signature:
+### **File**: `IOracleDataService.cs`  
+**Location**: `Star/Services` (or wherever your interface lives)
+
+Add a new method signature:
 
 ```csharp
-using Star.Models;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Star.Models;
 
 namespace Star.Services
 {
     public interface IOracleDataService
     {
-        // Existing methods...
-        Task<List<ProductTrade>> GetProductTradesAsync();
+        // ...existing methods...
+
+        Task<List<ProductTrade>> GetOtcProductTradesAsync();
     }
 }
 ```
 
 ---
 
-## 3. Implement the Query in Your Data Service
+# 3. Implement the Method in **OracleDataService**
 
-In **`OracleDataService.cs`**, implement **`GetProductTradesAsync()`** to run that “SELECT c.prd_typ_name...” query and map the results to `ProductTrade` objects:
+### **File**: `OracleDataService.cs`  
+**Location**: `Star/Services`
+
+Add the following method:
 
 ```csharp
-using Oracle.ManagedDataAccess.Client;
-using Star.Models;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-
-namespace Star.Services
+public async Task<List<ProductTrade>> GetOtcProductTradesAsync()
 {
-    public class OracleDataService : IOracleDataService
+    var resultList = new List<ProductTrade>();
+
+    try
     {
-        private readonly string _connectionString;
+        using var conn = new OracleConnection(_connectionString);
+        await conn.OpenAsync();
 
-        public OracleDataService(IConfiguration configuration)
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT c.prd_typ_name,
+                   COUNT(c.prd_typ_name) AS ""total_trades""
+            FROM star_workflow w
+            JOIN (
+                SELECT a.*,
+                       CASE
+                           WHEN a.prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
+                           WHEN a.prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
+                           WHEN a.prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
+                           WHEN a.prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
+                           WHEN a.prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
+                           WHEN a.prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
+                           WHEN a.prd_typ_cod = 'FRA' THEN 'FRA'
+                           WHEN a.prd_typ_cod = 'CAP' THEN 'Cap'
+                           WHEN a.prd_typ_cod = 'FLR' THEN 'Floor'
+                           WHEN a.prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
+                           WHEN a.prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
+                           WHEN a.prd_typ_cod = 'OSP' THEN 'Swaption Pay'
+                           WHEN a.prd_typ_cod = 'OSR' THEN 'Swaption Rec'
+                           WHEN a.prd_typ_cod = 'OSS' THEN 'Swaption Strad'
+                           WHEN a.prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
+                           WHEN a.prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
+                           WHEN a.prd_typ_cod = 'CSH' THEN 'Cashflow'
+                           WHEN a.prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
+                           WHEN a.prd_typ_cod = 'BME' THEN 'Container BME'
+                           WHEN a.prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
+                           WHEN a.prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
+                           WHEN a.prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
+                           ELSE a.prd_typ_cod
+                       END AS prd_typ_name
+                FROM star_contract PARTITION(product_oth) a
+            ) c ON c.con_no = w.con_no
+            WHERE inp_dt > TRUNC(SYSDATE - 7)
+              AND c.con_no = w.con_no
+              AND c.mrr_typ_cod IN (0, 1, 6)
+            GROUP BY c.prd_typ_name
+            ORDER BY ""total_trades"" DESC
+        ";
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
         {
-            _connectionString = configuration.GetConnectionString("OracleDb")
-                ?? throw new ArgumentNullException("Oracle connection string is not configured.");
-        }
+            var productName = reader["prd_typ_name"]?.ToString() ?? string.Empty;
+            var totalTrades = reader["total_trades"] is DBNull
+                ? 0
+                : Convert.ToInt32(reader["total_trades"]);
 
-        // ...existing methods (like GetFeatureUsageAsync)...
-
-        public async Task<List<ProductTrade>> GetProductTradesAsync()
-        {
-            var productTrades = new List<ProductTrade>();
-
-            try
+            resultList.Add(new ProductTrade
             {
-                using var conn = new OracleConnection(_connectionString);
-                await conn.OpenAsync();
-
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
-                    SELECT c.prd_typ_name, COUNT(c.prd_typ_name) AS total_trades
-                    FROM star_workflow w
-                    JOIN (
-                        SELECT a.*,
-                            CASE
-                                WHEN a.prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
-                                WHEN a.prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
-                                WHEN a.prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
-                                WHEN a.prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
-                                WHEN a.prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
-                                WHEN a.prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
-                                WHEN a.prd_typ_cod = 'FRA' THEN 'FRA'
-                                WHEN a.prd_typ_cod = 'CAP' THEN 'Cap'
-                                WHEN a.prd_typ_cod = 'FLR' THEN 'Floor'
-                                WHEN a.prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
-                                WHEN a.prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
-                                WHEN a.prd_typ_cod = 'OSP' THEN 'Swaption Pay'
-                                WHEN a.prd_typ_cod = 'OSR' THEN 'Swaption Rec'
-                                WHEN a.prd_typ_cod = 'OSS' THEN 'Swaption Strad'
-                                WHEN a.prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
-                                WHEN a.prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
-                                WHEN a.prd_typ_cod = 'CSH' THEN 'Cashflow'
-                                WHEN a.prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
-                                WHEN a.prd_typ_cod = 'BME' THEN 'Container BME'
-                                WHEN a.prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
-                                WHEN a.prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
-                                WHEN a.prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
-                                ELSE a.prd_typ_cod
-                            END AS prd_typ_name
-                        FROM star_contract PARTITION(product_oth) a
-                    ) c ON c.con_no = w.con_no
-                    WHERE inp_dt > TRUNC(SYSDATE - 7)
-                      AND c.mrr_typ_cod IN (0, 1, 6)
-                    GROUP BY c.prd_typ_name
-                    ORDER BY total_trades DESC
-                ";
-
-                using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    var prdName = reader["prd_typ_name"]?.ToString() ?? string.Empty;
-                    var total = reader["total_trades"] is DBNull
-                        ? 0
-                        : Convert.ToInt32(reader["total_trades"]);
-
-                    productTrades.Add(new ProductTrade
-                    {
-                        PrdTypName = prdName,
-                        TotalTrades = total
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                throw new Exception("Error fetching product trades", ex);
-            }
-
-            return productTrades;
+                ProductName = productName,
+                TotalTrades = totalTrades
+            });
         }
     }
+    catch (Exception ex)
+    {
+        throw new Exception("Error fetching OTC product trades", ex);
+    }
+
+    return resultList;
 }
 ```
 
 ---
 
-## 4. Update Your Existing Razor Page (e.g. `Counter.razor`) to Display the New Chart
+# 4. Create a **Bar Chart** Page
 
-You mentioned you want **all graphs on one page**. Currently, `Counter.razor` shows the “Feature Usage Chart.” We’ll **add** a second chart below it for this new query.
+### **File**: `OtcProductChart.razor`  
+**Location**: `Pages` (or wherever your Blazor pages live)
 
-### (a) Add Fields for the New Chart
-
-In `Counter.razor`, **add**:
-
-- A **`List<string>`** and **`List<double?>`** for the product trades chart’s labels/data.  
-- Another **BarChart** reference (or the same library you used for the first chart).  
-- A bit of logic to fetch the new data and set up its chart.
-
-Here’s an **example** that places the **new chart** below the existing one:
+Below is a sample bar chart using **ChartJs.Blazor**. We’ll style it and label axes. You can tweak the route, file name, or menu link as you like.
 
 ```razor
-@page "/counter"
-
+@page "/otc-product-chart"
 @using Star.Models
 @using Star.Services
 @using ChartJs.Blazor.BarChart
 @using ChartJs.Blazor.Common
-
 @inject IOracleDataService OracleDataService
 
-<h3>Feature Usage Chart</h3>
+<h3>OTC Product Types (Last 7 Days)</h3>
 
-@if (!string.IsNullOrEmpty(ErrorMessage))
+@if (IsLoading)
+{
+    <p>Loading chart...</p>
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
 {
     <div class="alert alert-danger">@((MarkupString)ErrorMessage</div>
 }
-else if (IsLoading)
-{
-    <p>Loading...</p>
-}
 else
 {
-    <BarChart @ref="barChart" Height="300" Class="mb-4" />
-
-    <h3>Product Trades Chart</h3>
-    <BarChart @ref="productTradesChart" Height="300" Class="mb-4" />
+    <BarChart @ref="barChart" Height="400" />
 }
 
 @code {
-    // Existing chart fields
-    private BarChart? barChart;
-    private BarChartOptions barChartOptions = new BarChartOptions();
-    private BlazorBootstrap.ChartData chartData = new BlazorBootstrap.ChartData();
-
-    // NEW fields for the second chart
-    private BarChart? productTradesChart;
-    private BarChartOptions productChartOptions = new BarChartOptions();
-    private BlazorBootstrap.ChartData productChartData = new BlazorBootstrap.ChartData();
-
     private bool IsLoading = true;
     private string? ErrorMessage;
+
+    private BarChart? barChart;
+    private BarChartOptions barChartOptions = new();
+    private BlazorBootstrap.ChartData chartData = new();
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            // 1. Fetch existing feature usage data
-            var featureUsageData = await OracleDataService.GetFeatureUsageAsync();
-            Console.WriteLine("FeatureUsage count: " + featureUsageData.Count);
-
-            // Prepare the existing "Feature Usage" chart
-            if (featureUsageData == null || featureUsageData.Count == 0)
+            var trades = await OracleDataService.GetOtcProductTradesAsync();
+            if (trades == null || trades.Count == 0)
             {
-                ErrorMessage = "No data available for Feature Usage.";
+                ErrorMessage = "No data found.";
                 return;
             }
 
-            // Map the data to chart labels/dataset
-            var labels = featureUsageData.ConvertAll(item => item.Feature);
-            var data = featureUsageData.ConvertAll(item => (double?)item.UsageCount);
+            // Extract labels & data
+            var labels = trades.Select(t => t.ProductName).ToList();
+            var values = trades.Select(t => (double?)t.TotalTrades).ToList();
 
-            var datasets = new List<IChartDataset>
+            // Build the dataset
+            var dataset = new BarChartDataset
             {
-                new BarChartDataset
-                {
-                    Data = data,
-                    BackgroundColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
-                    BorderColor = new List<string> { ColorUtility.CategoricalTwelveColors[0] },
-                    BorderWidth = new List<double> { 1 }
-                }
+                Data = values,
+                Label = "Total Trades",
+                BackgroundColor = "rgba(54, 162, 235, 0.6)", // Light-blue fill
+                BorderColor = "rgba(54, 162, 235, 1.0)",
+                BorderWidth = new List<double> { 1 },
             };
 
             chartData = new BlazorBootstrap.ChartData
             {
                 Labels = labels,
-                Datasets = datasets
+                Datasets = new List<IChartDataset> { dataset }
             };
 
+            // Configure bar chart (Axis labels, etc.)
             barChartOptions = new BarChartOptions
             {
                 Responsive = true,
-                Interaction = new Interaction { Mode = InteractionMode.Y },
-                IndexAxis = "y"
-            };
-            barChartOptions.Plugins.Legend.Display = false;
-
-            // 2. Fetch NEW Product Trades data
-            var productTrades = await OracleDataService.GetProductTradesAsync();
-            Console.WriteLine("ProductTrades count: " + productTrades.Count);
-
-            if (productTrades == null || productTrades.Count == 0)
-            {
-                // It's okay if no data => chart just won't show bars
-            }
-
-            // Prepare product trades chart
-            var prodLabels = productTrades.ConvertAll(pt => pt.PrdTypName);
-            var prodData = productTrades.ConvertAll(pt => (double?)pt.TotalTrades);
-
-            var productDatasets = new List<IChartDataset>
-            {
-                new BarChartDataset
+                Plugins = new Plugins
                 {
-                    Data = prodData,
-                    BackgroundColor = new List<string> { ColorUtility.CategoricalTwelveColors[1] },
-                    BorderColor = new List<string> { ColorUtility.CategoricalTwelveColors[1] },
-                    BorderWidth = new List<double> { 1 }
+                    Title = new Title
+                    {
+                        Display = true,
+                        Text = "OTC Product Types (Last 7 Days)"
+                    }
+                },
+                Scales = new Scales
+                {
+                    X = new CategoryScale
+                    {
+                        Title = new AxisTitle
+                        {
+                            Display = true,
+                            Text = "Product Type"
+                        },
+                        Ticks = new CategoryTicks
+                        {
+                            // If many products, may need rotation:
+                            // MaxRotation = 90,
+                            // MinRotation = 45
+                        }
+                    },
+                    Y = new LinearCartesianAxis
+                    {
+                        Title = new AxisTitle
+                        {
+                            Display = true,
+                            Text = "Number of Trades"
+                        },
+                        Ticks = new LinearCartesianTicks
+                        {
+                            Precision = 0,
+                            BeginAtZero = true
+                        }
+                    }
                 }
             };
-
-            productChartData = new BlazorBootstrap.ChartData
-            {
-                Labels = prodLabels,
-                Datasets = productDatasets
-            };
-
-            // Similar bar chart options
-            productChartOptions = new BarChartOptions
-            {
-                Responsive = true,
-                IndexAxis = "y"
-            };
-            productChartOptions.Plugins.Legend.Display = false;
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"<strong>Error:</strong> {ex.Message}<br/><pre>{ex.StackTrace}</pre>";
+            ErrorMessage = ex.Message;
         }
         finally
         {
@@ -292,169 +257,62 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && !string.IsNullOrEmpty(ErrorMessage))
+        if (firstRender && barChart != null && string.IsNullOrEmpty(ErrorMessage))
         {
-            return;
+            // Initialize chart
+            await barChart.InitializeAsync(chartData, barChartOptions);
         }
-
-        if (firstRender)
-        {
-            // Initialize the first chart
-            if (barChart != null)
-            {
-                await barChart.InitializeAsync(chartData, barChartOptions);
-            }
-
-            // Initialize the NEW product trades chart
-            if (productTradesChart != null)
-            {
-                await productTradesChart.InitializeAsync(productChartData, productChartOptions);
-            }
-        }
-
-        await base.OnAfterRenderAsync(firstRender);
     }
 }
 ```
 
-### Key Points
-
-- We reused the same **page** (`counter.razor`) but added a **second** `<BarChart>` for your new query.  
-- Each chart has its own `chartData` + `chartOptions`.  
-- We intentionally used a **horizontal** bar (`IndexAxis = "y"`) for both, but you can change that if you prefer a vertical orientation (`IndexAxis = "x"` or remove it).
-
----
-
-## 5. Build & Verify
-
-- Ensure you have references to `ChartJs.Blazor` and `BlazorBootstrap.ChartData` (or the library you’re using for the first chart).  
-- Run the app.  
-- Navigate to the URL for the `counter` page.  
-- You should see **two charts**: the existing “Feature Usage” one and the new “Product Trades” one.
+**Key Points:**
+- The data source calls `GetOtcProductTradesAsync()` from the service.  
+- We set up axis titles, chart title, and some color styling.  
+- If you have too many product types, consider rotating X‑axis labels for readability.
 
 ---
 
-# File Changes Recap
+# 5. (Optional) Add a NavMenu Link
 
-### 1. **`Models/ProductTrade.cs`** (New File)
-```diff
-+ namespace Star.Models
-+ {
-+     public class ProductTrade
-+     {
-+         public string PrdTypName { get; set; } = string.Empty;
-+         public int TotalTrades { get; set; }
-+     }
-+ }
+If you have a **NavMenu.razor**, you can add a link:
+
+```razor
+<NavLink class="nav-link" href="/otc-product-chart">
+    <span class="oi oi-bar-chart" aria-hidden="true"></span> OTC Products
+</NavLink>
 ```
 
-### 2. **`IOracleDataService.cs`**  
-```diff
- public interface IOracleDataService
- {
-+    Task<List<ProductTrade>> GetProductTradesAsync();
-
-     // existing methods...
- }
-```
-
-### 3. **`OracleDataService.cs`**  
-```diff
- public class OracleDataService : IOracleDataService
- {
-     // existing code...
-
-+    public async Task<List<ProductTrade>> GetProductTradesAsync()
-+    {
-+        var productTrades = new List<ProductTrade>();
-+        try
-+        {
-+            using var conn = new OracleConnection(_connectionString);
-+            await conn.OpenAsync();
-+            using var cmd = conn.CreateCommand();
-+            cmd.CommandText = @"...YOUR QUERY...";
-+
-+            using var reader = await cmd.ExecuteReaderAsync();
-+            while (await reader.ReadAsync())
-+            {
-+                var prdName = reader["prd_typ_name"]?.ToString() ?? string.Empty;
-+                var total = reader["total_trades"] is DBNull ? 0 : Convert.ToInt32(reader["total_trades"]);
-+                productTrades.Add(new ProductTrade { PrdTypName = prdName, TotalTrades = total });
-+            }
-+        }
-+        catch (Exception ex)
-+        {
-+            throw new Exception("Error fetching product trades", ex);
-+        }
-+        return productTrades;
-+    }
- }
-```
-
-### 4. **`Pages/Counter.razor`**  
-```diff
- @page "/counter"
-
-+ // Additional references if needed:
-+ @using Star.Models
-+ @using Star.Services
-+ @using ChartJs.Blazor.BarChart
-+ @using ChartJs.Blazor.Common
-
- @inject IOracleDataService OracleDataService
-
- // Existing code for the Feature Usage Chart...
-
-+ // NEW fields for Product Trades:
-+ private BarChart? productTradesChart;
-+ private BarChartOptions productChartOptions = new BarChartOptions();
-+ private BlazorBootstrap.ChartData productChartData = new BlazorBootstrap.ChartData();
-
- protected override async Task OnInitializedAsync()
- {
-     try
-     {
-         // 1. Existing feature usage data fetch...
-
-+        // 2. Fetch NEW Product Trades:
-+        var productTrades = await OracleDataService.GetProductTradesAsync();
-+        // build productChartData & productChartOptions
-     }
-     catch (Exception ex)
-     {
-         ...
-     }
-     finally
-     {
-         IsLoading = false;
-     }
- }
-
- protected override async Task OnAfterRenderAsync(bool firstRender)
- {
-     if (firstRender && string.IsNullOrEmpty(ErrorMessage))
-     {
-         if (barChart != null)
-         {
-             await barChart.InitializeAsync(chartData, barChartOptions);
-         }
-
-+        // Initialize the new chart
-+        if (productTradesChart != null)
-+        {
-+            await productTradesChart.InitializeAsync(productChartData, productChartOptions);
-+        }
-     }
-     await base.OnAfterRenderAsync(firstRender);
- }
-```
+Then you can navigate to [**`/otc-product-chart`**](about:blank) in your browser.
 
 ---
 
-## Next Steps
+## Final File Changes Recap
 
-- **Style**: If you want more vibrant colors, custom legends, or axis labels, tweak `productChartOptions`.  
-- **Combine** data series: If you want multiple product data series in one chart, you’d create multiple datasets in `productChartData.Datasets`.  
-- **Performance**: For many product types, a horizontal bar can get tall. You might need pagination or a different style if you have 50+ product types.  
+1. **`Star/Models/ProductTrade.cs`**  
+   - **(NEW)** Created with `ProductName` and `TotalTrades`.
 
-That’s it! You now have a **second** bar chart on the **same page** for your new “Product Code, Contracts, Product” query. You can repeat this pattern for other queries, each time creating a new model/service method and adding another chart below—or whichever layout you prefer.
+2. **`Star/Services/IOracleDataService.cs`**  
+   - **(MODIFIED)** Added `Task<List<ProductTrade>> GetOtcProductTradesAsync();`.
+
+3. **`Star/Services/OracleDataService.cs`**  
+   - **(MODIFIED)** Implemented `GetOtcProductTradesAsync()` with your SQL query.
+
+4. **`Pages/OtcProductChart.razor`**  
+   - **(NEW)** Razor page using ChartJs.Blazor to show a bar chart of your OTC product data.
+
+*(Optionally, you added a line in `Shared/NavMenu.razor` linking to `/otc-product-chart`.)*
+
+---
+
+## That’s It!
+
+Now you have:
+- A new model `ProductTrade` capturing `(ProductName, TotalTrades)`.
+- A service method returning that data via the **Oracle** query.
+- A Blazor page that displays a **bar chart** of “OTC product types in the last 7 days.”
+
+**Next Steps**  
+- Tweak chart styles/colors as you wish (e.g., chart background, bar colors, axis label rotation).  
+- If you’d like more charts, just follow the same pattern: create a model, add a service method, build a Razor page.  
+- For advanced visuals (like stacked bars or line charts with multiple datasets), let me know, and we’ll adapt accordingly.
