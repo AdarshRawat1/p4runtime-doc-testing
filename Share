@@ -125,3 +125,19 @@ wwwroot/
 
 Let me know once this renders properly — then we’ll modularize this logic into a Chart.razor component next!
 
+
+
+
+
+
+@page "/plotly-test" @inject IJSRuntime JSRuntime
+
+<h3>Sample Plotly Chart</h3><button class="btn btn-primary mb-3" @onclick="RenderChart">Show Sample Chart</button>
+
+<div id="sampleChart" style="width:100%;height:400px;"></div>@code { private async Task RenderChart() { var chartData = new { labels = new[] { "Feature A", "Feature B", "Feature C", "Feature D" }, values = new[] { 10, 25, 18, 5 }, title = "Sample Feature Usage", xLabel = "Feature", yLabel = "Usage Count" };
+
+await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "sampleChart", chartData);
+}
+
+}
+
