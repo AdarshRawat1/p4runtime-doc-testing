@@ -141,3 +141,77 @@ await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "sampleChart", chartData
 
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+@page "/feature-usage-chart" @inject IJSRuntime JSRuntime
+
+<h3>Feature Usage Chart</h3><button class="btn btn-primary mb-3" @onclick="RenderChart">Load Chart</button>
+
+@if (!string.IsNullOrEmpty(HtmlContent)) { <div>@((MarkupString)HtmlContent)</div> <div id="featureUsageChart" style="width:100%;height:500px;"></div> } else if (!string.IsNullOrEmpty(ErrorMessage)) { <div class="alert alert-danger">@ErrorMessage</div> } else { <p>Loading data...</p> }
+
+@code { private string HtmlContent = string.Empty; private string ErrorMessage = string.Empty;
+
+private async Task RenderChart()
+{
+    try
+    {
+        using var conn = new Oracle.ManagedDataAccess.Client.OracleConnection(
+            "Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=eurvlid07179.xmp.net.intra)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=408uk101)));User Id=star;Password=bsc123;"
+        );
+        await conn.OpenAsync();
+
+        using var cmd = new Oracle.ManagedDataAccess.Client.OracleCommand(@"
+            SELECT feature, COUNT(*) AS usage_count
+            FROM star_action_audit
+            WHERE mod_dt > TRUNC(SYSDATE) - 30
+              AND feature_type = 'SEARCH'
+            GROUP BY feature
+            ORDER BY usage_count DESC
+        ", conn);
+
+        var labels = new List<string>();
+        var values = new List<int>();
+        HtmlContent = "<ul>";
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var feature = reader["feature"].ToString();
+            var count = Convert.ToInt32(reader["usage_count"]);
+            labels.Add(feature);
+            values.Add(count);
+            HtmlContent += $"<li>{feature}: {count}</li>";
+        }
+        HtmlContent += "</ul>";
+
+        var chartData = new
+        {
+            labels,
+            values,
+            title = "Feature Usage in Last 30 Days",
+            xLabel = "Feature",
+            yLabel = "Usage Count"
+        };
+
+        await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "featureUsageChart", chartData);
+    }
+    catch (Exception ex)
+    {
+        ErrorMessage = ex.Message;
+    }
+}
+
+}
+
+
+
