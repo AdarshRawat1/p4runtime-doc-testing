@@ -1,67 +1,98 @@
-@using BlazorBootstrap
-@using Star.Services
-@using Star.Models
-@using Microsoft.AspNetCore.Components
+To integrate your Plotly.js library (from a local ZIP/folder) into a Blazor Server project (since you can’t use NuGet for this), follow these steps:
 
-@if (IsLoading)
-{
-    <PlaceholderContainer Animation="PlaceholderAnimation.Glow">
-        <Placeholder Width="PlaceholderWidth.Col12" />
-        <Placeholder Width="PlaceholderWidth.Col12" />
-    </PlaceholderContainer>
-}
-else if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <Alert Color="AlertColor.Danger">@ErrorMessage</Alert>
-}
-else
-{
-    <BarChart @ref="barChart" Width="800" Height="400" />
-}
+
+---
+
+Step 1: Extract Plotly Folder
+
+Extract the Plotly.js ZIP to a known folder. Let's say:
+wwwroot/js/plotly
+
+
+The main JS file should be:
+wwwroot/js/plotly/plotly.js
+(or possibly plotly.min.js)
+
+
+---
+
+Step 2: Reference Plotly in _Host.cshtml
+
+Open:
+Pages/_Host.cshtml
+(Blazor Server) and add this before </body>:
+
+<script src="~/js/plotly/plotly.min.js"></script>
+
+Or if you're using the full version:
+
+<script src="~/js/plotly/plotly.js"></script>
+
+
+---
+
+Step 3: Create a JS interop file (optional but clean)
+
+Create a new file:
+wwwroot/js/plotlyInterop.js
+
+Example content:
+
+window.plotlyInterop = {
+    drawChart: function (elementId, data, layout) {
+        Plotly.newPlot(elementId, data, layout);
+    }
+};
+
+Then include it in _Host.cshtml as well:
+
+<script src="~/js/plotlyInterop.js"></script>
+
+
+---
+
+Step 4: Call from Blazor
+
+In your Blazor component (e.g. Pages/Chart.razor):
+
+@inject IJSRuntime JSRuntime
+
+<div id="myPlot" style="width:100%;height:400px;"></div>
 
 @code {
-    private bool IsLoading = true;
-    private string? ErrorMessage;
-    private ChartData chartData = new();
-    private BarChartOptions barChartOptions = new();
-    private BarChart barChart = default!;
-
-    [Inject]
-    public IOracleDataService DataService { get; set; } = default!;
-
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        try
+        if (firstRender)
         {
-            var trades = await DataService.GetOtcProductTradeAsync();
-
-            var labels = trades.Select(t => t.ProductName).ToList();
-            var values = trades.Select(t => (double)t.TotalTrades).ToList();
-
-            var dataset = new BarChartDataset
+            var data = new[]
             {
-                Label = "Trades (Last 7 Days)",
-                Data = values,
-                BackgroundColor = new List<string> { "rgba(54, 162, 235, 0.6)" },
-                BorderColor = new List<string> { "rgba(54, 162, 235, 1.0)" },
-                BorderWidth = new List<int> { 1 }
+                new {
+                    x = new[] { "A", "B", "C" },
+                    y = new[] { 10, 15, 13 },
+                    type = "bar"
+                }
             };
 
-            chartData.Labels = labels;
-            chartData.Datasets = new List<IChartDataset> { dataset };
+            var layout = new {
+                title = "My Plotly Chart"
+            };
 
-            barChartOptions.Responsive = true;
-            barChartOptions.Plugins.Legend.Display = true;
-
-            await barChart.InitializeAsync(chartData, barChartOptions);
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = ex.Message;
-        }
-        finally
-        {
-            IsLoading = false;
+            await JSRuntime.InvokeVoidAsync("plotlyInterop.drawChart", "myPlot", data, layout);
         }
     }
 }
+
+
+---
+
+Summary:
+
+Put Plotly files under wwwroot/js/plotly
+
+Reference them in _Host.cshtml
+
+Use JavaScript interop to call Plotly from Blazor
+
+
+Let me know if your folder contains other Plotly files or a different structure, and I’ll adjust the paths for you.
+
