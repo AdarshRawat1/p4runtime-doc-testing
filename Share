@@ -1,143 +1,581 @@
-Absolutely! Let's now hook up Plotly.js to display the data from your GetFeatureUsageAsync() method using JS interop.
+ Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\h59234\source\repos\Star\
+warn: Microsoft.AspNetCore.Components.Server.Circuits.RemoteRenderer[100]
+      Unhandled exception rendering component: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+fail: Microsoft.AspNetCore.Components.Server.Circuits.CircuitHost[111]
+      Unhandled exception in circuit 'jvbn_Sah3brBUpWmKsbf3U-VEUdR7dA5C4x_V7wqAP4'.
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+warn: Microsoft.AspNetCore.Components.Server.Circuits.RemoteRenderer[100]
+      Unhandled exception rendering component: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+fail: Microsoft.AspNetCore.Components.Server.Circuits.CircuitHost[111]
+      Unhandled exception in circuit 'GPQcN_A2MRwuiRvIjZSL6t4cpQMuxLq2yCg_ONwgx34'.
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
 
 
----
-
-✅ Final Setup: Plotly.js for GetFeatureUsageAsync()
-
-We’ll follow a similar pattern and use the existing method from your IOracleDataService.
 
 
----
-
-1. Chart Placeholder in Razor Page
-
-Add this to your Razor page (e.g., Pages/Counter.razor or make a new one like FeatureUsageChart.razor):
-
-@page "/feature-usage"
-@inject IOracleDataService OracleDataService
-@inject IJSRuntime JSRuntime
-
-<h3>Feature Usage Chart</h3>
-
-@if (isLoading)
-{
-    <p>Loading...</p>
-}
-else if (!string.IsNullOrEmpty(error))
-{
-    <div class="text-danger">@error</div>
-}
-else
-{
-    <div id="featureUsageChart" style="width:100%; height:400px;"></div>
-}
-
-@code {
-    private bool isLoading = true;
-    private string? error;
-    private List<string> labels = new();
-    private List<int> values = new();
-
-    protected override async Task OnInitializedAsync()
-    {
-        try
-        {
-            var data = await OracleDataService.GetFeatureUsageAsync();
-            labels = data.Select(f => f.Feature).ToList();
-            values = data.Select(f => f.UsageCount).ToList();
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
-        finally
-        {
-            isLoading = false;
-        }
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender && string.IsNullOrEmpty(error))
-        {
-            var chartData = new
-            {
-                labels = labels,
-                values = values,
-                title = "Feature Usage in Last 30 Days",
-                xLabel = "Feature",
-                yLabel = "Count"
-            };
-
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "featureUsageChart", chartData);
-        }
-    }
-}
 
 
----
-
-2. JavaScript Interop File (plotlyInterop.js)
-
-Already present? Then you’re good.
-
-If not, create:
-
-wwwroot/js/plotlyInterop.js
-
-Paste:
-
-window.renderPlotlyBarChart = (elementId, chartData) => {
-    const trace = {
-        x: chartData.labels,
-        y: chartData.values,
-        type: 'bar',
-        marker: {
-            color: 'rgba(54, 162, 235, 0.6)',
-            line: {
-                color: 'rgba(54, 162, 235, 1.0)',
-                width: 1
-            }
-        }
-    };
-
-    const layout = {
-        title: chartData.title,
-        xaxis: { title: chartData.xLabel },
-        yaxis: { title: chartData.yLabel }
-    };
-
-    Plotly.newPlot(elementId, [trace], layout);
-};
 
 
----
-
-3. Add JS References to _Layout.cshtml
-
-In Pages/_Layout.cshtml, before </body>:
-
-<script src="js/plotly/plotly.min.js"></script>
-<script src="js/plotlyInterop.js"></script>
-
-Make sure the plotly.min.js exists at wwwroot/js/plotly/plotly.min.js.
 
 
----
-
-✅ You’re Done!
-
-You’ll now see a Plotly bar chart of Feature vs UsageCount on https://localhost:xxxx/feature-usage.
-
-Let me know if you want:
-
-A horizontal version
-
-Custom tooltips
-
-A component-based version (so you can reuse it for other pages)
 
 
-Ready for the next chart whenever you are.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\h59234\source\repos\Star\
+warn: Microsoft.AspNetCore.Components.Server.Circuits.RemoteRenderer[100]
+      Unhandled exception rendering component: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+fail: Microsoft.AspNetCore.Components.Server.Circuits.CircuitHost[111]
+      Unhandled exception in circuit 'jvbn_Sah3brBUpWmKsbf3U-VEUdR7dA5C4x_V7wqAP4'.
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+warn: Microsoft.AspNetCore.Components.Server.Circuits.RemoteRenderer[100]
+      Unhandled exception rendering component: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+fail: Microsoft.AspNetCore.Components.Server.Circuits.CircuitHost[111]
+      Unhandled exception in circuit 'GPQcN_A2MRwuiRvIjZSL6t4cpQMuxLq2yCg_ONwgx34'.
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\h59234\source\repos\Star\
+warn: Microsoft.AspNetCore.Components.Server.Circuits.RemoteRenderer[100]
+      Unhandled exception rendering component: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+fail: Microsoft.AspNetCore.Components.Server.Circuits.CircuitHost[111]
+      Unhandled exception in circuit 'jvbn_Sah3brBUpWmKsbf3U-VEUdR7dA5C4x_V7wqAP4'.
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+warn: Microsoft.AspNetCore.Components.Server.Circuits.RemoteRenderer[100]
+      Unhandled exception rendering component: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+fail: Microsoft.AspNetCore.Components.Server.Circuits.CircuitHost[111]
+      Unhandled exception in circuit 'GPQcN_A2MRwuiRvIjZSL6t4cpQMuxLq2yCg_ONwgx34'.
+      Microsoft.JSInterop.JSException: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+Error: Could not find 'renderPlotlyBarChart' ('renderPlotlyBarChart' was undefined).
+    at https://localhost:7000/_framework/blazor.server.js:1:497
+    at Array.forEach (<anonymous>)
+    at i.findFunction (https://localhost:7000/_framework/blazor.server.js:1:465)
+    at E (https://localhost:7000/_framework/blazor.server.js:1:2606)
+    at https://localhost:7000/_framework/blazor.server.js:1:3494
+    at new Promise (<anonymous>)
+    at kt.beginInvokeJSFromDotNet (https://localhost:7000/_framework/blazor.server.js:1:3475)
+    at https://localhost:7000/_framework/blazor.server.js:1:72001
+    at Array.forEach (<anonymous>)
+    at kt._invokeClientMethod (https://localhost:7000/_framework/blazor.server.js:1:71987)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Star.Pages.Index.OnAfterRenderAsync(Boolean firstRender) in C:\Users\h59234\source\repos\Star\Pages\Index.razor:line 60
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.GetErrorHandledTask(Task taskToHandle, ComponentState owningComponentState)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
