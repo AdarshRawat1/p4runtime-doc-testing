@@ -1,25 +1,92 @@
-Great — now let’s set up your Plotly.js graph from scratch using manual JS interop in your Blazor Server (.NET 6) app. You don’t need any Blazor component libraries — we’ll do everything cleanly step-by-step.
+Absolutely! Let's now hook up Plotly.js to display the data from your GetFeatureUsageAsync() method using JS interop.
 
 
 ---
 
-✅ Final Working Setup: Plotly + Blazor via JS Interop
+✅ Final Setup: Plotly.js for GetFeatureUsageAsync()
 
-1. Add plotly.min.js to wwwroot
-
-If your plotly.min.js is in dist/ from npm:
-
-Copy it to:
-
-wwwroot/js/plotly/plotly.min.js
-
+We’ll follow a similar pattern and use the existing method from your IOracleDataService.
 
 
 ---
 
-2. Create JS interop file
+1. Chart Placeholder in Razor Page
 
-In wwwroot/js/plotlyInterop.js, add:
+Add this to your Razor page (e.g., Pages/Counter.razor or make a new one like FeatureUsageChart.razor):
+
+@page "/feature-usage"
+@inject IOracleDataService OracleDataService
+@inject IJSRuntime JSRuntime
+
+<h3>Feature Usage Chart</h3>
+
+@if (isLoading)
+{
+    <p>Loading...</p>
+}
+else if (!string.IsNullOrEmpty(error))
+{
+    <div class="text-danger">@error</div>
+}
+else
+{
+    <div id="featureUsageChart" style="width:100%; height:400px;"></div>
+}
+
+@code {
+    private bool isLoading = true;
+    private string? error;
+    private List<string> labels = new();
+    private List<int> values = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var data = await OracleDataService.GetFeatureUsageAsync();
+            labels = data.Select(f => f.Feature).ToList();
+            values = data.Select(f => f.UsageCount).ToList();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && string.IsNullOrEmpty(error))
+        {
+            var chartData = new
+            {
+                labels = labels,
+                values = values,
+                title = "Feature Usage in Last 30 Days",
+                xLabel = "Feature",
+                yLabel = "Count"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "featureUsageChart", chartData);
+        }
+    }
+}
+
+
+---
+
+2. JavaScript Interop File (plotlyInterop.js)
+
+Already present? Then you’re good.
+
+If not, create:
+
+wwwroot/js/plotlyInterop.js
+
+Paste:
 
 window.renderPlotlyBarChart = (elementId, chartData) => {
     const trace = {
@@ -47,106 +114,30 @@ window.renderPlotlyBarChart = (elementId, chartData) => {
 
 ---
 
-3. Reference both JS files in _Layout.cshtml
+3. Add JS References to _Layout.cshtml
 
-In Pages/_Layout.cshtml, add before </body>:
+In Pages/_Layout.cshtml, before </body>:
 
 <script src="js/plotly/plotly.min.js"></script>
 <script src="js/plotlyInterop.js"></script>
 
-
----
-
-4. Add a chart <div> and render it with JS interop
-
-In any .razor page (like Pages/FetchData.razor):
-
-@inject IJSRuntime JS
-@inject IOracleDataService DataService
-
-<h3>OTC Product Trades</h3>
-
-@if (isLoading)
-{
-    <p>Loading...</p>
-}
-else if (!string.IsNullOrEmpty(error))
-{
-    <p class="text-danger">@error</p>
-}
-else
-{
-    <div id="otcChart" style="height: 400px; width: 100%;"></div>
-}
-
-@code {
-    private bool isLoading = true;
-    private string? error;
-    private List<string> labels = new();
-    private List<int> values = new();
-
-    protected override async Task OnInitializedAsync()
-    {
-        try
-        {
-            var data = await DataService.GetOtcProductTradeAsync();
-
-            labels = data.Select(x => x.ProductName).ToList();
-            values = data.Select(x => x.TotalTrades).ToList();
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
-        finally
-        {
-            isLoading = false;
-        }
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender && string.IsNullOrEmpty(error))
-        {
-            var chartData = new
-            {
-                labels = labels,
-                values = values,
-                title = "OTC Product Types (Last 7 Days)",
-                xLabel = "Product",
-                yLabel = "Contracts"
-            };
-
-            await JS.InvokeVoidAsync("renderPlotlyBarChart", "otcChart", chartData);
-        }
-    }
-}
+Make sure the plotly.min.js exists at wwwroot/js/plotly/plotly.min.js.
 
 
 ---
 
-✅ Done!
+✅ You’re Done!
 
-You now have a working dynamic Plotly bar chart rendering your Oracle data with:
+You’ll now see a Plotly bar chart of Feature vs UsageCount on https://localhost:xxxx/feature-usage.
 
-No NuGet dependencies
+Let me know if you want:
 
-Full manual JS control
+A horizontal version
 
-Clean Blazor Server .NET 6 structure
+Custom tooltips
 
-
-
----
-
-If you want I can:
-
-Help you convert this into a reusable component (like <PlotlyBarChart />)
-
-Help with other chart types (line, pie, scatter, 3D)
-
-Fix layout, responsiveness, or interactivity
+A component-based version (so you can reuse it for other pages)
 
 
-Just drop the next graph or need and I’ll wire it up.
+Ready for the next chart whenever you are.
 
