@@ -1,83 +1,110 @@
-To integrate your Plotly.js library (from a local ZIP/folder) into a Blazor Server project (since you can’t use NuGet for this), follow these steps:
+Perfect! Let’s quickly integrate Plotly.js v3.0.1 with your Blazor Server app to visualize your Oracle query result (like ProductName, TotalTrades) as a bar chart.
 
 
 ---
 
-Step 1: Extract Plotly Folder
+✅ Goal
 
-Extract the Plotly.js ZIP to a known folder. Let's say:
-wwwroot/js/plotly
+We'll create a PlotlyChart.razor component that:
 
+Loads Plotly.js (v3.0.1 from wwwroot)
 
-The main JS file should be:
-wwwroot/js/plotly/plotly.js
-(or possibly plotly.min.js)
+Receives C# data (like product/trade list)
 
+Uses JS interop to render a chart
 
----
-
-Step 2: Reference Plotly in _Host.cshtml
-
-Open:
-Pages/_Host.cshtml
-(Blazor Server) and add this before </body>:
-
-<script src="~/js/plotly/plotly.min.js"></script>
-
-Or if you're using the full version:
-
-<script src="~/js/plotly/plotly.js"></script>
 
 
 ---
 
-Step 3: Create a JS interop file (optional but clean)
+✅ Step-by-Step Setup
 
-Create a new file:
-wwwroot/js/plotlyInterop.js
 
-Example content:
+---
 
-window.plotlyInterop = {
-    drawChart: function (elementId, data, layout) {
-        Plotly.newPlot(elementId, data, layout);
-    }
+1. Copy Plotly.js to wwwroot
+
+1. Go to your downloaded NPM directory (node_modules/plotly.js-dist).
+
+
+2. Copy plotly.min.js to:
+
+wwwroot/js/plotly/plotly.min.js
+
+
+
+
+---
+
+2. Add plotly.min.js to _Layout.cshtml
+
+At the bottom of Pages/_Layout.cshtml, before </body>:
+
+<script src="js/plotly/plotly.min.js"></script>
+<script src="js/plotlyInterop.js"></script>
+
+
+---
+
+3. Create plotlyInterop.js in wwwroot/js/
+
+// wwwroot/js/plotlyInterop.js
+window.renderPlotlyBarChart = (elementId, chartData) => {
+    const trace = {
+        x: chartData.labels,
+        y: chartData.values,
+        type: 'bar',
+        marker: {
+            color: 'rgba(54, 162, 235, 0.6)',
+            line: {
+                color: 'rgba(54, 162, 235, 1.0)',
+                width: 1
+            }
+        }
+    };
+
+    const layout = {
+        title: chartData.title,
+        xaxis: { title: chartData.xLabel },
+        yaxis: { title: chartData.yLabel }
+    };
+
+    Plotly.newPlot(elementId, [trace], layout);
 };
 
-Then include it in _Host.cshtml as well:
-
-<script src="~/js/plotlyInterop.js"></script>
-
 
 ---
 
-Step 4: Call from Blazor
+4. Create the Razor Component
 
-In your Blazor component (e.g. Pages/Chart.razor):
+Shared/PlotlyBarChart.razor
 
-@inject IJSRuntime JSRuntime
-
-<div id="myPlot" style="width:100%;height:400px;"></div>
+<div id="@ChartId" style="width:100%;height:400px;"></div>
 
 @code {
+    [Parameter] public string ChartId { get; set; } = "plotlyChart";
+    [Parameter] public List<string> Labels { get; set; } = new();
+    [Parameter] public List<int> Values { get; set; } = new();
+    [Parameter] public string Title { get; set; } = "Chart Title";
+    [Parameter] public string XLabel { get; set; } = "X Axis";
+    [Parameter] public string YLabel { get; set; } = "Y Axis";
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            var data = new[]
+            var chartData = new
             {
-                new {
-                    x = new[] { "A", "B", "C" },
-                    y = new[] { 10, 15, 13 },
-                    type = "bar"
-                }
+                labels = Labels,
+                values = Values,
+                title = Title,
+                xLabel = XLabel,
+                yLabel = YLabel
             };
 
-            var layout = new {
-                title = "My Plotly Chart"
-            };
-
-            await JSRuntime.InvokeVoidAsync("plotlyInterop.drawChart", "myPlot", data, layout);
+            await JS.InvokeVoidAsync("renderPlotlyBarChart", ChartId, chartData);
         }
     }
 }
@@ -85,14 +112,63 @@ In your Blazor component (e.g. Pages/Chart.razor):
 
 ---
 
-Summary:
+5. Use it in a Page
 
-Put Plotly files under wwwroot/js/plotly
+Example in Pages/Counter.razor or new chart page
 
-Reference them in _Host.cshtml
+@inject IOracleDataService DataService
 
-Use JavaScript interop to call Plotly from Blazor
+@if (IsLoading)
+{
+    <p>Loading chart...</p>
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+else
+{
+    <PlotlyBarChart
+        ChartId="otcProductChart"
+        Labels="@labels"
+        Values="@values"
+        Title="OTC Product Trades (Last 7 Days)"
+        XLabel="Product"
+        YLabel="Contracts" />
+}
+
+@code {
+    private bool IsLoading = true;
+    private string? ErrorMessage;
+    private List<string> labels = new();
+    private List<int> values = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var data = await DataService.GetOtcProductTradeAsync();
+            labels = data.Select(d => d.ProductName).ToList();
+            values = data.Select(d => d.TotalTrades).ToList();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
 
 
-Let me know if your folder contains other Plotly files or a different structure, and I’ll adjust the paths for you.
+---
+
+✅ Summary
+
+
+---
+
+Would you like me to bundle this into downloadable files or build a version with stacked/line/scatter chart support too?
 
