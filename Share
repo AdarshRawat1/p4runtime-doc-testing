@@ -1,198 +1,89 @@
-Great! Here's a complete working setup for rendering a Plotly.js bar chart in a Blazor Server app using JavaScript interop, for your GetFeatureUsageAsync() data.
 
-
----
-
-✅ 1. Place this in your Index.razor or any Razor page:
-
-@page "/"
-@inject IOracleDataService DataService
+@page "/feature-usage-graph"
 @inject IJSRuntime JSRuntime
 
-<h3>Feature Usage Chart</h3>
+<h3>Feature Usage</h3>
 
-<button class="btn btn-primary mb-3" @onclick="RenderChart">Show Chart</button>
+<button class="btn btn-outline-primary me-2" @onclick="LoadData">Load Data</button>
+<button class="btn btn-success" @onclick="RenderChart" disabled="@(!dataLoaded)">Render Chart</button>
 
-@if (IsLoading)
+@if (!string.IsNullOrEmpty(ErrorMessage))
 {
-    <p>Loading data...</p>
+    <div class="alert alert-danger mt-3">@ErrorMessage</div>
 }
-else if (!string.IsNullOrEmpty(ErrorMessage))
+else if (!string.IsNullOrEmpty(HtmlContent))
 {
-    <div class="alert alert-danger">@ErrorMessage</div>
+    <div class="mt-3">@((MarkupString)HtmlContent)</div>
+    <div class="mt-4" id="featureUsageChart" style="width:100%;height:500px;"></div>
+}
+else if (isLoading)
+{
+    <p class="text-info mt-3">Loading data...</p>
 }
 else
 {
-    <div id="featureUsageChart" style="width:100%;height:500px;"></div>
+    <p class="text-muted mt-3">Click 'Load Data' to begin.</p>
 }
 
 @code {
-    private bool IsLoading = false;
-    private string? ErrorMessage;
+    private string HtmlContent = string.Empty;
+    private string ErrorMessage = string.Empty;
+    private List<string> labels = new();
+    private List<int> values = new();
+    private bool dataLoaded = false;
+    private bool isLoading = false;
 
-    private async Task RenderChart()
+    private async Task LoadData()
     {
-        IsLoading = true;
-        ErrorMessage = null;
+        isLoading = true;
+        ErrorMessage = "";
+        HtmlContent = "";
+        labels.Clear();
+        values.Clear();
+        dataLoaded = false;
 
         try
         {
-            var data = await DataService.GetFeatureUsageAsync();
-            var labels = data.Select(d => d.Feature).ToList();
-            var values = data.Select(d => d.UsageCount).ToList();
+            using var conn = new Oracle.ManagedDataAccess.Client.OracleConnection(
+                "Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=eurvlid07179.xmp.net.intra)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=408uk101)));User Id=star;Password=bsc123;"
+            );
+            await conn.OpenAsync();
 
-            var chartData = new
+            using var cmd = new Oracle.ManagedDataAccess.Client.OracleCommand(@"
+                SELECT feature, COUNT(*) AS usage_count
+                FROM star_action_audit
+                WHERE mod_dt > TRUNC(SYSDATE) - 30
+                  AND feature_type = 'SEARCH'
+                GROUP BY feature
+                ORDER BY usage_count DESC
+            ", conn);
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            HtmlContent = "<ul class='list-group'>";
+            while (await reader.ReadAsync())
             {
-                labels,
-                values,
-                title = "Feature Usage in Last 30 Days",
-                xLabel = "Feature",
-                yLabel = "Count"
-            };
-
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "featureUsageChart", chartData);
+                var feature = reader["feature"].ToString();
+                var count = Convert.ToInt32(reader["usage_count"]);
+                labels.Add(feature!);
+                values.Add(count);
+                HtmlContent += $"<li class='list-group-item d-flex justify-content-between'><span>{feature}</span><span class='badge bg-primary'>{count}</span></li>";
+            }
+            HtmlContent += "</ul>";
+            dataLoaded = true;
         }
         catch (Exception ex)
         {
             ErrorMessage = ex.Message;
         }
-
-        IsLoading = false;
-    }
-}
-
-
----
-
-✅ 2. Add this JavaScript interop file: wwwroot/js/plotlyInterop.js
-
-window.renderPlotlyBarChart = (chartId, chartData) => {
-    var trace = {
-        x: chartData.labels,
-        y: chartData.values,
-        type: 'bar',
-        marker: {
-            color: 'rgba(54, 162, 235, 0.6)',
-            line: {
-                color: 'rgba(54, 162, 235, 1.0)',
-                width: 1.5
-            }
-        }
-    };
-
-    var layout = {
-        title: chartData.title,
-        xaxis: {
-            title: chartData.xLabel
-        },
-        yaxis: {
-            title: chartData.yLabel
-        }
-    };
-
-    Plotly.newPlot(chartId, [trace], layout);
-};
-
-
----
-
-✅ 3. Add references in _Layout.cshtml inside <head> and <body>:
-
-Inside <head>:
-
-<script src="/js/plotly/dist/plotly.min.js"></script>
-
-At the end of <body>:
-
-<script src="/js/plotlyInterop.js"></script>
-
-Make sure both files exist in wwwroot/js.
-
-
----
-
-✅ 4. Organize your wwwroot folder like this:
-
-wwwroot/
-  js/
-    plotly/
-      dist/
-        plotly.min.js     ← (from npm 3.0.1)
-    plotlyInterop.js      ← (you created this)
-
-
----
-
-Let me know once this renders properly — then we’ll modularize this logic into a Chart.razor component next!
-
-
-
-
-
-
-@page "/plotly-test" @inject IJSRuntime JSRuntime
-
-<h3>Sample Plotly Chart</h3><button class="btn btn-primary mb-3" @onclick="RenderChart">Show Sample Chart</button>
-
-<div id="sampleChart" style="width:100%;height:400px;"></div>@code { private async Task RenderChart() { var chartData = new { labels = new[] { "Feature A", "Feature B", "Feature C", "Feature D" }, values = new[] { 10, 25, 18, 5 }, title = "Sample Feature Usage", xLabel = "Feature", yLabel = "Usage Count" };
-
-await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "sampleChart", chartData);
-}
-
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-@page "/feature-usage-chart" @inject IJSRuntime JSRuntime
-
-<h3>Feature Usage Chart</h3><button class="btn btn-primary mb-3" @onclick="RenderChart">Load Chart</button>
-
-@if (!string.IsNullOrEmpty(HtmlContent)) { <div>@((MarkupString)HtmlContent)</div> <div id="featureUsageChart" style="width:100%;height:500px;"></div> } else if (!string.IsNullOrEmpty(ErrorMessage)) { <div class="alert alert-danger">@ErrorMessage</div> } else { <p>Loading data...</p> }
-
-@code { private string HtmlContent = string.Empty; private string ErrorMessage = string.Empty;
-
-private async Task RenderChart()
-{
-    try
-    {
-        using var conn = new Oracle.ManagedDataAccess.Client.OracleConnection(
-            "Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=eurvlid07179.xmp.net.intra)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=408uk101)));User Id=star;Password=bsc123;"
-        );
-        await conn.OpenAsync();
-
-        using var cmd = new Oracle.ManagedDataAccess.Client.OracleCommand(@"
-            SELECT feature, COUNT(*) AS usage_count
-            FROM star_action_audit
-            WHERE mod_dt > TRUNC(SYSDATE) - 30
-              AND feature_type = 'SEARCH'
-            GROUP BY feature
-            ORDER BY usage_count DESC
-        ", conn);
-
-        var labels = new List<string>();
-        var values = new List<int>();
-        HtmlContent = "<ul>";
-
-        using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        finally
         {
-            var feature = reader["feature"].ToString();
-            var count = Convert.ToInt32(reader["usage_count"]);
-            labels.Add(feature);
-            values.Add(count);
-            HtmlContent += $"<li>{feature}: {count}</li>";
+            isLoading = false;
         }
-        HtmlContent += "</ul>";
+    }
+
+    private async Task RenderChart()
+    {
+        if (!dataLoaded) return;
 
         var chartData = new
         {
@@ -205,13 +96,15 @@ private async Task RenderChart()
 
         await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "featureUsageChart", chartData);
     }
-    catch (Exception ex)
-    {
-        ErrorMessage = ex.Message;
-    }
 }
 
-}
 
+Here’s your final updated page:
+
+Two buttons: “Load Data” and “Render Chart”
+
+Shows "Loading data..." only during fetch
+
+Renders HTML list and Plotly bar chart after successful
 
 
