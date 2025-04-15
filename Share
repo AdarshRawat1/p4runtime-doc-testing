@@ -1,56 +1,25 @@
-Perfect — that’s exactly where it should be!
-
-You’re using the npm-style folder, so your file is likely located at:
-
-<unzipped-folder>/dist/plotly.min.js
-
-Now let’s finalize it for your Blazor project:
+Great — now let’s set up your Plotly.js graph from scratch using manual JS interop in your Blazor Server (.NET 6) app. You don’t need any Blazor component libraries — we’ll do everything cleanly step-by-step.
 
 
 ---
 
-✅ Final Steps to Use plotly.min.js in Blazor
+✅ Final Working Setup: Plotly + Blazor via JS Interop
 
-1. Create folder inside wwwroot
+1. Add plotly.min.js to wwwroot
 
-In your Blazor project:
+If your plotly.min.js is in dist/ from npm:
 
-wwwroot/js/plotly/
-
-2. Copy plotly.min.js
-
-From:
-
-<unzipped>/dist/plotly.min.js
-
-To:
+Copy it to:
 
 wwwroot/js/plotly/plotly.min.js
 
 
----
-
-3. Reference it in _Layout.cshtml
-
-In Pages/_Layout.cshtml, scroll to the bottom of the file and just before </body>, paste:
-
-<script src="js/plotly/plotly.min.js"></script>
-<script src="js/plotlyInterop.js"></script>
-
-> (You’ll create plotlyInterop.js in the next step.)
-
-
-
 
 ---
 
-4. Add JavaScript interop file
+2. Create JS interop file
 
-Create this file:
-
-wwwroot/js/plotlyInterop.js
-
-Paste:
+In wwwroot/js/plotlyInterop.js, add:
 
 window.renderPlotlyBarChart = (elementId, chartData) => {
     const trace = {
@@ -78,35 +47,106 @@ window.renderPlotlyBarChart = (elementId, chartData) => {
 
 ---
 
-5. Add this chart to your Blazor component
+3. Reference both JS files in _Layout.cshtml
 
-Use this Razor component example I shared earlier: PlotlyBarChart.razor.
+In Pages/_Layout.cshtml, add before </body>:
 
-You’ll use this like:
-
-<PlotlyBarChart
-    ChartId="otcChart"
-    Labels="@labels"
-    Values="@values"
-    Title="OTC Product Trades"
-    XLabel="Product"
-    YLabel="Contracts" />
+<script src="js/plotly/plotly.min.js"></script>
+<script src="js/plotlyInterop.js"></script>
 
 
 ---
 
-✅ Result:
+4. Add a chart <div> and render it with JS interop
 
-You’ll now have:
+In any .razor page (like Pages/FetchData.razor):
 
-Fully offline Plotly integration
+@inject IJSRuntime JS
+@inject IOracleDataService DataService
 
-Dynamic data from C#
+<h3>OTC Product Trades</h3>
 
-No NuGet or wrapper dependencies
+@if (isLoading)
+{
+    <p>Loading...</p>
+}
+else if (!string.IsNullOrEmpty(error))
+{
+    <p class="text-danger">@error</p>
+}
+else
+{
+    <div id="otcChart" style="height: 400px; width: 100%;"></div>
+}
 
-Ready for future extensions (line, pie, 3D, etc.)
+@code {
+    private bool isLoading = true;
+    private string? error;
+    private List<string> labels = new();
+    private List<int> values = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var data = await DataService.GetOtcProductTradeAsync();
+
+            labels = data.Select(x => x.ProductName).ToList();
+            values = data.Select(x => x.TotalTrades).ToList();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && string.IsNullOrEmpty(error))
+        {
+            var chartData = new
+            {
+                labels = labels,
+                values = values,
+                title = "OTC Product Types (Last 7 Days)",
+                xLabel = "Product",
+                yLabel = "Contracts"
+            };
+
+            await JS.InvokeVoidAsync("renderPlotlyBarChart", "otcChart", chartData);
+        }
+    }
+}
 
 
-Let me know if you'd like a zip of the whole working folder structure.
+---
+
+✅ Done!
+
+You now have a working dynamic Plotly bar chart rendering your Oracle data with:
+
+No NuGet dependencies
+
+Full manual JS control
+
+Clean Blazor Server .NET 6 structure
+
+
+
+---
+
+If you want I can:
+
+Help you convert this into a reusable component (like <PlotlyBarChart />)
+
+Help with other chart types (line, pie, scatter, 3D)
+
+Fix layout, responsiveness, or interactivity
+
+
+Just drop the next graph or need and I’ll wire it up.
 
