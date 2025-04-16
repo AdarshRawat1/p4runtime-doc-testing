@@ -1,45 +1,92 @@
-@* Shared/Charts/ProductTradeChart.razor *@
-@inject IOracleDataService DataService
-@inject IJSRuntime JSRuntime
+✅ Done! You've now got a modular component for **“OTC Product Types Booked (Last 7 Days)”** using Plotly.
 
-<h5 class="fw-semibold">OTC Product Types Booked (Last 7 Days)</h5>
-<div class="mb-3">
-    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
-    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
-</div>
+---
 
-@if (!string.IsNullOrEmpty(ErrorMessage))
+### 🔧 Where to place it
+
+Put this file at:
+```
+/Shared/Charts/ProductTradeChart.razor
+```
+
+---
+
+### 🧩 Add to `Counter.razor` (or wherever you want):
+
+```razor
+@using Star.Shared.Charts
+
+<h3 class="mb-4">📊 Graph Dashboard</h3>
+
+<FeatureUsageChart />
+<ProductTradeChart />
+```
+
+---
+
+### 🔁 What's Left?
+
+Just confirm that this method exists in your `IOracleDataService.cs` and `OracleDataService.cs`:
+
+```csharp
+Task<List<ProductTrade>> GetOtcProductTradesAsync();
+```
+
+And your `ProductTrade.cs` model:
+
+```csharp
+public class ProductTrade
 {
-    <div class="alert alert-danger">@ErrorMessage</div>
+    public string ProductName { get; set; }
+    public int TotalTrades { get; set; }
 }
+```
 
-<div id="productTradeChart" style="width: 100%; height: 400px;"></div>
+Ready to test this one out? Or shall I help prep the next chart module?
 
-@code {
-    private string? ErrorMessage;
 
-    private async Task GenerateGraph(bool logScale)
+
+
+
+
+
+
+
+✅ Done! I’ve recreated your Oracle logic with the following:
+
+---
+
+### 📄 `IOracleDataService.cs`
+
+```csharp
+Task<List<ProductTrade>> GetOtcProductTradesAsync();
+```
+
+---
+
+### 📄 `OracleDataService.cs`
+
+- Fully implemented the query for OTC Product Types Booked (last 7 days)
+- Connected to Oracle and mapped to `ProductTrade` model
+
+---
+
+### 📄 You also need this model file:
+
+```csharp
+// Models/ProductTrade.cs
+namespace Star.Models
+{
+    public class ProductTrade
     {
-        try
-        {
-            var data = await DataService.GetOtcProductTradesAsync();
-            var labels = data.Select(d => d.ProductName).ToList();
-            var values = data.Select(d => (double)d.TotalTrades).ToList();
-
-            var chartData = new
-            {
-                labels,
-                values,
-                title = "OTC Product Types Booked in Last 7 Days",
-                xLabel = "Product Type",
-                yLabel = "Contracts"
-            };
-
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = ex.Message;
-        }
+        public string ProductName { get; set; } = string.Empty;
+        public int TotalTrades { get; set; }
     }
 }
+```
+
+---
+
+You're now set to use `<ProductTradeChart />` in your dashboard with full backend connection!
+
+Let me know when you're ready for the next chart component 🚀
