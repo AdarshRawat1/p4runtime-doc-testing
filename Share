@@ -53,3 +53,45 @@
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+window.renderPlotlyBarChart = (chartId, chartData, useLogScale) => {
+    const trace = {
+        x: chartData.labels,
+        y: chartData.values,
+        type: 'bar',
+        marker: {
+            color: 'rgba(54, 162, 235, 0.6)',
+            line: {
+                color: 'rgba(54, 162, 235, 1.0)',
+                width: 1.5
+            }
+        }
+    };
+
+    const layout = {
+        title: chartData.title,
+        xaxis: {
+            title: chartData.xLabel,
+            tickangle: -45,
+            automargin: true
+        },
+        yaxis: {
+            title: chartData.yLabel,
+            type: useLogScale ? 'log' : 'linear',
+            automargin: true
+        },
+        margin: { t: 60, b: 120, l: 60, r: 40 }, // extra bottom space for rotated labels
+    };
+
+    Plotly.newPlot(chartId, [trace], layout);
+};
+
