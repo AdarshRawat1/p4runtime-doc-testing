@@ -1,76 +1,159 @@
-Perfect — your `OracleDataService` and `IOracleDataService` already provide a **working `GetFeatureUsageAsync()`** method that returns the list of features with usage count.
+Great — fresh start is the best way to get this clean and modular! Here's a step-by-step plan for setting up Plotly.js modularly with your Blazor Server (.NET 6) project using your Oracle data:
 
 ---
 
-## ✅ Now, let’s render this data using your new Plotly component
+### ✅ 1. **Project Folder Structure Recommendation**
+Keep it clean and modular like this:
 
-### 🎯 GOAL: Show a graph using `PlotlyChart.razor` from your existing Oracle DB service.
+```
+Star/
+│
+├── Pages/
+│   ├── Index.razor                # Main landing page (can host charts)
+│   ├── FeatureUsage.razor         # Example chart page (modular)
+│
+├── Shared/
+│   └── Charts/
+│       └── PlotlyChart.razor      # Reusable Plotly component
+│
+├── wwwroot/
+│   └── js/
+│       ├── plotly/
+│       │   └── plotly.min.js      # From Plotly.js 3.0.1
+│       └── plotlyInterop.js       # Custom JS interop file
+│
+├── Models/
+│   └── FeatureUsage.cs            # Models for chart data
+│
+├── Services/
+│   ├── OracleDataService.cs       # Your existing Oracle fetch logic
+│   └── IOracleDataService.cs
+```
 
 ---
 
-### ✅ Step 1: Ensure the model is defined  
-`FeatureUsage.cs` (which you likely already have):
+### ✅ 2. **Add the Interop JS**
 
-```csharp
-namespace Star.Models
-{
-    public class FeatureUsage
+📁 `wwwroot/js/plotlyInterop.js`:
+
+```js
+window.renderPlotlyBarChart = (chartId, chartData) => {
+    var trace = {
+        x: chartData.labels,
+        y: chartData.values,
+        type: 'bar',
+        marker: { color: 'rgba(54, 162, 235, 0.6)' }
+    };
+
+    var layout = {
+        title: chartData.title,
+        xaxis: { title: chartData.xLabel },
+        yaxis: { title: chartData.yLabel }
+    };
+
+    Plotly.newPlot(chartId, [trace], layout);
+};
+```
+
+---
+
+### ✅ 3. **Reference JS in `_Layout.cshtml`**
+
+📄 `Pages/_Layout.cshtml` (inside `<body>` before `</body>`):
+
+```html
+<script src="~/js/plotly/plotly.min.js"></script>
+<script src="~/js/plotlyInterop.js"></script>
+```
+
+---
+
+### ✅ 4. **Reusable PlotlyChart Component**
+
+📄 `Shared/Charts/PlotlyChart.razor`:
+
+```razor
+@inject IJSRuntime JSRuntime
+
+<div class="mb-5">
+    <h5>@Title</h5>
+    <div id="@ChartId" style="width:100%; height:400px;"></div>
+</div>
+
+@code {
+    [Parameter] public string ChartId { get; set; } = "myPlot";
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public List<string> Labels { get; set; } = new();
+    [Parameter] public List<double> Values { get; set; } = new();
+    [Parameter] public string XLabel { get; set; } = "";
+    [Parameter] public string YLabel { get; set; } = "";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        public string Feature { get; set; } = string.Empty;
-        public int UsageCount { get; set; }
+        if (firstRender)
+        {
+            var chartData = new
+            {
+                labels = Labels,
+                values = Values,
+                title = Title,
+                xLabel = XLabel,
+                yLabel = YLabel
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", ChartId, chartData);
+        }
     }
 }
 ```
 
 ---
 
-### ✅ Step 2: Create a new page — `FeatureDashboard.razor`  
-This page will call your service and render the chart:
+### ✅ 5. **FeatureUsage Page Example**
+
+📄 `Pages/FeatureUsage.razor`:
 
 ```razor
-@page "/feature-dashboard"
-@inject IOracleDataService OracleDataService
+@page "/feature-usage"
+@inject Star.Services.IOracleDataService DataService
 
-<h3 class="mb-3">Feature Usage Dashboard</h3>
+<h3>Feature Usage in Last 30 Days</h3>
 
 @if (IsLoading)
 {
-    <p>Loading feature usage data...</p>
+    <p>Loading...</p>
 }
 else if (!string.IsNullOrEmpty(ErrorMessage))
 {
     <div class="alert alert-danger">@ErrorMessage</div>
 }
-else if (Data?.Any() == true)
-{
-    <PlotlyChart ChartId="featureUsageChart"
-                 Title="Feature Usage (Last 30 Days)"
-                 Labels="Labels"
-                 Values="Values" />
-}
 else
 {
-    <p>No data available.</p>
+    <PlotlyChart ChartId="featureUsageChart"
+                 Title="Feature Usage in Last 30 Days"
+                 Labels="Labels"
+                 Values="Values"
+                 XLabel="Feature"
+                 YLabel="Count" />
 }
 
 @code {
-    private List<FeatureUsage>? Data;
-    private List<string> Labels = new();
-    private List<int> Values = new();
-    private string? ErrorMessage;
     private bool IsLoading = true;
+    private string? ErrorMessage;
+    private List<string> Labels = new();
+    private List<double> Values = new();
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            Data = await OracleDataService.GetFeatureUsageAsync();
-            Labels = Data.Select(f => f.Feature).ToList();
-            Values = Data.Select(f => f.UsageCount).ToList();
+            var data = await DataService.GetFeatureUsageAsync();
+            Labels = data.Select(f => f.Feature).ToList();
+            Values = data.Select(f => (double)f.UsageCount).ToList();
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load data: {ex.Message}";
+            ErrorMessage = ex.Message;
         }
         finally
         {
@@ -82,31 +165,16 @@ else
 
 ---
 
-### ✅ Step 3: Use the Component
+### ✅ 6. **Register `PlotlyChart` Namespace**
 
-Make sure you have this at the top of the file or in `_Imports.razor`:
+In `_Imports.razor`, add:
 
 ```razor
-@using Star.Models
-@using Star.Services
 @using Star.Shared.Charts
 ```
 
 ---
 
-### ✅ That’s it! What’s Happening:
+Let’s start with this `FeatureUsage` page. Once this is confirmed working, we can build additional charts (next query) in their own pages or components the same way.
 
-- Blazor page calls `GetFeatureUsageAsync()`
-- It prepares `labels` and `values` from the response
-- It passes them to the `<PlotlyChart />` component
-- The JS renders it via `plotlyInterop.js`
-
----
-
-### ✅ Optional: Style + Enhance
-Want to:
-- Add `BlazorBootstrap` placeholder while loading?
-- Render multiple queries under tabs or cards?
-- Add export/download chart feature?
-
-Let me know the next query or enhancement!
+Ready to test this setup? Let me know if you'd like a `.razor` + `.js` pack zipped too.
