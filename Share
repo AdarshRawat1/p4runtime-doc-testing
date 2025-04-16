@@ -178,3 +178,191 @@ In `_Imports.razor`, add:
 Let’s start with this `FeatureUsage` page. Once this is confirmed working, we can build additional charts (next query) in their own pages or components the same way.
 
 Ready to test this setup? Let me know if you'd like a `.razor` + `.js` pack zipped too.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sure! Here's how you can configure your Oracle DB connection string inside your **`appsettings.json`** file:
+
+---
+
+### ✅ `appsettings.json`
+
+Add the `"ConnectionStrings"` section like this:
+
+```json
+{
+  "ConnectionStrings": {
+    "OracleDb": "Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=eurvlid07179.xmp.net.intra)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=408uk101)));User Id=star;Password=bsc123;"
+  },
+
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*"
+}
+```
+
+> ⚠️ Make sure your `OracleDb` key name **matches** exactly with the one used in your `OracleDataService.cs` file:
+```csharp
+_connectionString = configuration.GetConnectionString("OracleDb");
+```
+
+---
+
+Let me know if you also want to move this to `secrets.json` or use environment variables for production!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+It looks like I can't find any backup or existing copies of your `OracleDataService.cs` or `IOracleDataService.cs` files in the shared project folder.
+
+But no worries — here’s the exact logic we had earlier. You can copy these back into your project:
+
+---
+
+### ✅ `IOracleDataService.cs` (Interface)
+
+Place this in your `Services` folder.
+
+```csharp
+using Star.Models;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+namespace Star.Services
+{
+    public interface IOracleDataService
+    {
+        Task<List<FeatureUsage>> GetFeatureUsageAsync();
+    }
+}
+```
+
+---
+
+### ✅ `OracleDataService.cs` (Service Implementation)
+
+Also place this in the `Services` folder:
+
+```csharp
+using Oracle.ManagedDataAccess.Client;
+using Star.Models;
+using Microsoft.Extensions.Configuration;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+namespace Star.Services
+{
+    public class OracleDataService : IOracleDataService
+    {
+        private readonly string _connectionString;
+
+        public OracleDataService(IConfiguration configuration)
+        {
+            _connectionString = configuration.GetConnectionString("OracleDb")
+                ?? throw new ArgumentNullException("Oracle connection string is not configured.");
+        }
+
+        public async Task<List<FeatureUsage>> GetFeatureUsageAsync()
+        {
+            var featureUsageList = new List<FeatureUsage>();
+
+            try
+            {
+                using var conn = new OracleConnection(_connectionString);
+                await conn.OpenAsync();
+
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT feature, COUNT(*) AS usage_count
+                    FROM star_action_audit
+                    WHERE mod_dt > TRUNC(SYSDATE) - 30
+                      AND feature_type = 'SEARCH'
+                    GROUP BY feature
+                    ORDER BY usage_count DESC
+                ";
+
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var feature = reader["feature"]?.ToString() ?? string.Empty;
+                    var usageCount = reader["usage_count"] != DBNull.Value
+                        ? Convert.ToInt32(reader["usage_count"]) : 0;
+
+                    featureUsageList.Add(new FeatureUsage
+                    {
+                        Feature = feature,
+                        UsageCount = usageCount
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Error fetching data from Oracle DB", ex);
+            }
+
+            return featureUsageList;
+        }
+    }
+}
+```
+
+---
+
+Let me know if you also lost the model `FeatureUsage.cs` — I’ll restore that too!
