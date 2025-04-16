@@ -1,45 +1,80 @@
-
-
-
-Awesome! Let’s begin 🚀
+Perfect — your `OracleDataService` and `IOracleDataService` already provide a **working `GetFeatureUsageAsync()`** method that returns the list of features with usage count.
 
 ---
 
-### ✅ Step 1: Set Up the Modular Plotly Chart Component
+## ✅ Now, let’s render this data using your new Plotly component
 
-We’ll start by creating a reusable component named `PlotlyChart.razor`.
+### 🎯 GOAL: Show a graph using `PlotlyChart.razor` from your existing Oracle DB service.
 
 ---
 
-### 📁 File: `Shared/Charts/PlotlyChart.razor`
+### ✅ Step 1: Ensure the model is defined  
+`FeatureUsage.cs` (which you likely already have):
+
+```csharp
+namespace Star.Models
+{
+    public class FeatureUsage
+    {
+        public string Feature { get; set; } = string.Empty;
+        public int UsageCount { get; set; }
+    }
+}
+```
+
+---
+
+### ✅ Step 2: Create a new page — `FeatureDashboard.razor`  
+This page will call your service and render the chart:
 
 ```razor
-<div class="mb-5">
-    <h5>@Title</h5>
-    <div id="@ChartId" style="width:100%; height:400px;"></div>
-</div>
+@page "/feature-dashboard"
+@inject IOracleDataService OracleDataService
+
+<h3 class="mb-3">Feature Usage Dashboard</h3>
+
+@if (IsLoading)
+{
+    <p>Loading feature usage data...</p>
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+else if (Data?.Any() == true)
+{
+    <PlotlyChart ChartId="featureUsageChart"
+                 Title="Feature Usage (Last 30 Days)"
+                 Labels="Labels"
+                 Values="Values" />
+}
+else
+{
+    <p>No data available.</p>
+}
 
 @code {
-    [Parameter] public string ChartId { get; set; } = Guid.NewGuid().ToString();
-    [Parameter] public string Title { get; set; } = "Chart";
-    [Parameter] public List<string> Labels { get; set; } = new();
-    [Parameter] public List<int> Values { get; set; } = new();
-    [Inject] public IJSRuntime JSRuntime { get; set; } = default!;
+    private List<FeatureUsage>? Data;
+    private List<string> Labels = new();
+    private List<int> Values = new();
+    private string? ErrorMessage;
+    private bool IsLoading = true;
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override async Task OnInitializedAsync()
     {
-        if (firstRender && Labels.Any() && Values.Any())
+        try
         {
-            var chartData = new
-            {
-                labels = Labels,
-                values = Values,
-                title = Title,
-                xLabel = "Feature",
-                yLabel = "Count"
-            };
-
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", ChartId, chartData);
+            Data = await OracleDataService.GetFeatureUsageAsync();
+            Labels = Data.Select(f => f.Feature).ToList();
+            Values = Data.Select(f => f.UsageCount).ToList();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load data: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
         }
     }
 }
@@ -47,88 +82,31 @@ We’ll start by creating a reusable component named `PlotlyChart.razor`.
 
 ---
 
-### 📁 File: `wwwroot/js/plotlyInterop.js`
+### ✅ Step 3: Use the Component
 
-```js
-window.renderPlotlyBarChart = function (chartId, chartData) {
-    const chartDiv = document.getElementById(chartId);
-    if (!chartDiv) {
-        console.warn("Chart container not found:", chartId);
-        return;
-    }
+Make sure you have this at the top of the file or in `_Imports.razor`:
 
-    Plotly.newPlot(chartDiv, [{
-        x: chartData.labels,
-        y: chartData.values,
-        type: 'bar',
-        marker: { color: 'rgba(54, 162, 235, 0.6)' }
-    }], {
-        title: chartData.title,
-        xaxis: { title: chartData.xLabel },
-        yaxis: { title: chartData.yLabel }
-    });
-};
-```
-
-Place it inside: `wwwroot/js/plotlyInterop.js`
-
----
-
-### 📄 Update `_Host.cshtml` (at the bottom before `</body>`)
-
-```html
-<script src="js/plotly/dist/plotly.min.js"></script>
-<script src="js/plotlyInterop.js"></script>
-<script src="_framework/blazor.server.js"></script>
+```razor
+@using Star.Models
+@using Star.Services
+@using Star.Shared.Charts
 ```
 
 ---
 
-### ✅ Now: Send your **first query** and its chart type (bar, line, etc.)
+### ✅ That’s it! What’s Happening:
 
-Once you send it, I’ll:
-- Add the service method
-- Create the model
-- Add it to `FeatureDashboard.razor` using the `PlotlyChart` component
-
-Ready when you are 💡
-
-
-
-
-
-
-
-
-Great catch! 🔍  
-You're absolutely right — in the **default Blazor Server template for .NET 6**, you'll usually see this setup:
-
-- ✅ `_Host.cshtml` defines the Blazor server rendering pipeline — it injects the layout.
-- ✅ `Pages/_Layout.cshtml` contains the actual `<html>`, `<head>`, and `<body>` tags.
+- Blazor page calls `GetFeatureUsageAsync()`
+- It prepares `labels` and `values` from the response
+- It passes them to the `<PlotlyChart />` component
+- The JS renders it via `plotlyInterop.js`
 
 ---
 
-### ✅ So: Where to put your script tags?
+### ✅ Optional: Style + Enhance
+Want to:
+- Add `BlazorBootstrap` placeholder while loading?
+- Render multiple queries under tabs or cards?
+- Add export/download chart feature?
 
-👉 **Place the following script tags inside `_Layout.cshtml`**, **right before the closing `</body>` tag**:
-
-```html
-<script src="js/plotly/dist/plotly.min.js"></script>
-<script src="js/plotlyInterop.js"></script>
-<script src="_framework/blazor.server.js"></script>
-```
-
-📌 Why this order?
-- `plotly.min.js` → loads Plotly core
-- `plotlyInterop.js` → defines `renderPlotlyBarChart()`
-- `blazor.server.js` → Blazor framework starts last
-
----
-
-### ⚠️ Important
-If you accidentally put your Plotly JS **after** `blazor.server.js`, you’ll get the `renderPlotlyBarChart is undefined` error — like earlier.
-
----
-
-Let me know once this is set up ✅  
-Then we’ll continue and plug in your first query!
+Let me know the next query or enhancement!
