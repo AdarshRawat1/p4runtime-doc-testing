@@ -1,142 +1,148 @@
-@* Shared/Charts/ProductTradeChart.razor *@
-@inject IOracleDataService DataService
-@inject IJSRuntime JSRuntime
+// IOracleDataService.cs
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Star.Models;
 
-<h5 class="fw-semibold">OTC Product Types Booked (Last 7 Days)</h5>
-<div class="mb-3">
-    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
-    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
-</div>
-
-@if (!string.IsNullOrEmpty(ErrorMessage))
+namespace Star.Services
 {
-    <div class="alert alert-danger">@ErrorMessage</div>
+    public interface IOracleDataService
+    {
+        Task<List<FeatureUsage>> GetFeatureUsageAsync();
+        Task<List<ProductTrade>> GetOtcProductTradesAsync();
+    }
 }
 
-<div id="productTradeChart" style="width: 100%; height: 400px;"></div>
+// OracleDataService.cs
+using Oracle.ManagedDataAccess.Client;
+using Star.Models;
+using Star.Services;
+using Microsoft.Extensions.Configuration;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
-@code {
-    private string? ErrorMessage;
-
-    private async Task GenerateGraph(bool logScale)
+namespace Star.Services
+{
+    public class OracleDataService : IOracleDataService
     {
-        try
-        {
-            var data = await DataService.GetOtcProductTradesAsync();
-            var labels = data.Select(d => d.ProductName).ToList();
-            var values = data.Select(d => (double)d.TotalTrades).ToList();
+        private readonly string _connectionString;
 
-            var chartData = new
+        public OracleDataService(IConfiguration configuration)
+        {
+            _connectionString = configuration.GetConnectionString("OracleDb")
+                ?? throw new ArgumentNullException("Oracle connection string is not configured.");
+        }
+
+        public async Task<List<FeatureUsage>> GetFeatureUsageAsync()
+        {
+            var featureUsageList = new List<FeatureUsage>();
+
+            try
             {
-                labels,
-                values,
-                title = "OTC Product Types Booked in Last 7 Days",
-                xLabel = "Product Type",
-                yLabel = "Contracts"
-            };
+                using var conn = new OracleConnection(_connectionString);
+                await conn.OpenAsync();
 
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT feature, COUNT(*) AS usage_count
+                    FROM star_action_audit
+                    WHERE mod_dt > TRUNC(SYSDATE) - 30
+                      AND feature_type = 'SEARCH'
+                    GROUP BY feature
+                    ORDER BY usage_count DESC
+                ";
+
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var feature = reader["feature"]?.ToString() ?? string.Empty;
+                    var usageCount = reader["usage_count"] != DBNull.Value
+                        ? Convert.ToInt32(reader["usage_count"]) : 0;
+
+                    featureUsageList.Add(new FeatureUsage
+                    {
+                        Feature = feature,
+                        UsageCount = usageCount
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Error fetching data from Oracle DB", ex);
+            }
+
+            return featureUsageList;
         }
-        catch (Exception ex)
+
+        public async Task<List<ProductTrade>> GetOtcProductTradesAsync()
         {
-            ErrorMessage = ex.Message;
+            var result = new List<ProductTrade>();
+
+            try
+            {
+                using var conn = new OracleConnection(_connectionString);
+                await conn.OpenAsync();
+
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT c.prd_typ_name,
+                           COUNT(c.prd_typ_name) AS total_trades
+                    FROM star_workflow w
+                    JOIN (
+                        SELECT a.*,
+                               CASE
+                                  WHEN a.prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
+                                  WHEN a.prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
+                                  WHEN a.prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
+                                  WHEN a.prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
+                                  WHEN a.prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
+                                  WHEN a.prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
+                                  WHEN a.prd_typ_cod = 'FRA' THEN 'FRA'
+                                  WHEN a.prd_typ_cod = 'CAP' THEN 'Cap'
+                                  WHEN a.prd_typ_cod = 'FLR' THEN 'Floor'
+                                  WHEN a.prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
+                                  WHEN a.prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
+                                  WHEN a.prd_typ_cod = 'OSP' THEN 'Swaption Pay'
+                                  WHEN a.prd_typ_cod = 'OSR' THEN 'Swaption Rec'
+                                  WHEN a.prd_typ_cod = 'OSS' THEN 'Swaption Strad'
+                                  WHEN a.prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
+                                  WHEN a.prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
+                                  WHEN a.prd_typ_cod = 'CSH' THEN 'Cashflow'
+                                  WHEN a.prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
+                                  WHEN a.prd_typ_cod = 'BME' THEN 'Container BME'
+                                  WHEN a.prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
+                                  WHEN a.prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
+                                  WHEN a.prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
+                                  ELSE a.prd_typ_cod
+                               END AS prd_typ_name
+                        FROM star_contract PARTITION(product_oth) a
+                    ) c ON c.con_no = w.con_no
+                    WHERE inp_dt > TRUNC(SYSDATE - 7)
+                      AND c.con_no = w.con_no
+                      AND c.mrr_typ_cod IN (0, 1, 6)
+                    GROUP BY c.prd_typ_name
+                    ORDER BY total_trades DESC
+                ";
+
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var name = reader["prd_typ_name"]?.ToString() ?? string.Empty;
+                    var count = reader["total_trades"] != DBNull.Value ? Convert.ToInt32(reader["total_trades"]) : 0;
+
+                    result.Add(new ProductTrade
+                    {
+                        ProductName = name,
+                        TotalTrades = count
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Error fetching OTC product trades", ex);
+            }
+
+            return result;
         }
     }
 }
-
-
-
-
-
-✅ Done! You've now got a modular component for **“OTC Product Types Booked (Last 7 Days)”** using Plotly.
-
----
-
-### 🔧 Where to place it
-
-Put this file at:
-```
-/Shared/Charts/ProductTradeChart.razor
-```
-
----
-
-### 🧩 Add to `Counter.razor` (or wherever you want):
-
-```razor
-@using Star.Shared.Charts
-
-<h3 class="mb-4">📊 Graph Dashboard</h3>
-
-<FeatureUsageChart />
-<ProductTradeChart />
-```
-
----
-
-### 🔁 What's Left?
-
-Just confirm that this method exists in your `IOracleDataService.cs` and `OracleDataService.cs`:
-
-```csharp
-Task<List<ProductTrade>> GetOtcProductTradesAsync();
-```
-
-And your `ProductTrade.cs` model:
-
-```csharp
-public class ProductTrade
-{
-    public string ProductName { get; set; }
-    public int TotalTrades { get; set; }
-}
-```
-
-Ready to test this one out? Or shall I help prep the next chart module?
-
-
-
-
-
-
-
-
-
-✅ Done! I’ve recreated your Oracle logic with the following:
-
----
-
-### 📄 `IOracleDataService.cs`
-
-```csharp
-Task<List<ProductTrade>> GetOtcProductTradesAsync();
-```
-
----
-
-### 📄 `OracleDataService.cs`
-
-- Fully implemented the query for OTC Product Types Booked (last 7 days)
-- Connected to Oracle and mapped to `ProductTrade` model
-
----
-
-### 📄 You also need this model file:
-
-```csharp
-// Models/ProductTrade.cs
-namespace Star.Models
-{
-    public class ProductTrade
-    {
-        public string ProductName { get; set; } = string.Empty;
-        public int TotalTrades { get; set; }
-    }
-}
-```
-
----
-
-You're now set to use `<ProductTradeChart />` in your dashboard with full backend connection!
-
-Let me know when you're ready for the next chart component 🚀
