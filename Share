@@ -1,157 +1,163 @@
-Great! Here's your **final updated Razor file** for the OTC Product Trades chart using Plotly.js, with:
-
-✅ Modular design  
-✅ UI-enhanced loader (wave + message)  
-✅ Error handling  
-✅ Click-based rendering with `IsLoading` control  
-✅ No Bootstrap/3rd-party dependency  
-
----
-
-### ✅ `Shared/Charts/ProductTradeChart.razor`
-
-```razor
-@inject IOracleDataService DataService
-@inject IJSRuntime JSRuntime
-@using Star.Models
-@using Star.Shared.Components
-
-<h5 class="fw-semibold">📈 OTC Product Types Booked (Last 7 Days)</h5>
-
-<div class="mb-3">
-    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
-    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
-</div>
-
-@if (IsLoading)
-{
-    <div class="graph-loader">
-        <LoaderMarkup />
-        <p class="loading-message">Loading data and rendering graph...</p>
-    </div>
-}
-else if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <div class="alert-box">@ErrorMessage</div>
-}
-else
-{
-    <div id="productTradeChart" class="graph-container"></div>
-}
-
-@code {
-    private bool IsLoading = false;
-    private string? ErrorMessage;
-
-    private async Task GenerateGraph(bool logScale)
-    {
-        try
-        {
-            IsLoading = true;
-            ErrorMessage = null;
-
-            var data = await DataService.GetOtcProductTradesAsync();
-            var labels = data.Select(d => d.ProductName).ToList();
-            var values = data.Select(d => (double)d.TotalTrades).ToList();
-
-            var chartData = new
-            {
-                labels,
-                values,
-                title = "OTC Product Types Booked in Last 7 Days",
-                xLabel = "Product Type",
-                yLabel = "Contracts"
-            };
-
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = $"Error: {ex.Message}";
-        }
-        finally
-        {
-            IsLoading = false;
-        }
-    }
-}
-```
-
----
-
-### ✅ `LoaderMarkup.razor` (in `Shared/Components/`)
-
-```razor
-<div class="wave-loader">
-    <div class="bar"></div>
-    <div class="bar"></div>
-    <div class="bar"></div>
-    <div class="bar"></div>
-    <div class="bar"></div>
+<div class="star-loader">
+    <div class="star-icon">★</div>
+    <div class="star-text">Loading graph...</div>
 </div>
 
 <style>
-    .wave-loader {
+    .star-loader {
         display: flex;
-        justify-content: center;
+        flex-direction: column;
         align-items: center;
-        height: 60px;
-        gap: 6px;
+        justify-content: center;
+        height: 150px;
+        gap: 10px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
 
-    .wave-loader .bar {
-        width: 6px;
-        height: 40px;
-        background-color: #3498db;
-        animation: wave 1.2s infinite ease-in-out;
+    .star-icon {
+        font-size: 48px;
+        color: #81cfff;
+        animation: pulse 1.5s infinite;
     }
 
-    .wave-loader .bar:nth-child(2) { animation-delay: 0.1s; }
-    .wave-loader .bar:nth-child(3) { animation-delay: 0.2s; }
-    .wave-loader .bar:nth-child(4) { animation-delay: 0.3s; }
-    .wave-loader .bar:nth-child(5) { animation-delay: 0.4s; }
-
-    @keyframes wave {
-        0%, 100% { transform: scaleY(1); }
-        50% { transform: scaleY(2); }
+    .star-text {
+        font-size: 16px;
+        color: #555;
     }
 
-    .loading-message {
-        margin-top: 12px;
-        font-size: 1rem;
-        color: #333;
-        font-weight: 500;
-    }
+    @keyframes pulse {
+        0% {
+            transform: scale(1);
+            opacity: 0.7;
+        }
 
-    .alert-box {
-        padding: 0.75rem 1rem;
-        border-radius: 6px;
-        background-color: #f8d7da;
-        color: #842029;
-        border: 1px solid #f5c2c7;
-        margin-bottom: 1rem;
-    }
+        50% {
+            transform: scale(1.2);
+            opacity: 1;
+        }
 
-    .graph-container {
-        width: 100%;
-        height: 400px;
-        transition: opacity 0.3s ease-in-out;
+        100% {
+            transform: scale(1);
+            opacity: 0.7;
+        }
     }
 </style>
-```
+
+
+
+
+
+Absolutely! To enhance the user experience during data loading in your STAR dashboard, consider implementing a **custom loading animation** that reflects the STAR branding. Here's how you can achieve this:
 
 ---
 
-### ✅ To Use in Main Page (`Counter.razor` or elsewhere)
+## 🌟 Introducing the `StarLoader` Component
 
-```razor
-<ProductTradeChart />
+### 📁 File Location:
+```
+/Shared/Components/StarLoader.razor
 ```
 
-✔ That's it. This will now:
-- Show loading animation with message
-- Render the Plotly chart on button click
-- Handle errors cleanly
-- Stay modular and clean
+### 🧩 Component Code
 
-Let me know if you want to do this for the Feature Usage graph as well!
+
+
+```razor
+<div class="star-loader">
+    <div class="star-icon">★</div>
+    <div class="star-text">Loading STAR dashboard data...</div>
+</div>
+
+<style>
+    .star-loader {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 150px;
+        gap: 10px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    .star-icon {
+        font-size: 48px;
+        color: #f39c12;
+        animation: pulse 1.5s infinite;
+    }
+
+    .star-text {
+        font-size: 16px;
+        color: #555;
+    }
+
+    @keyframes pulse {
+        0% { transform: scale(1); opacity: 0.7; }
+        50% { transform: scale(1.2); opacity: 1; }
+        100% { transform: scale(1); opacity: 0.7; }
+    }
+</style>
+``
+
+
+
+---
+
+### ✅ How to Use in Your Components
+
+1. **Import the Component*: At the top of your `.razor` file, ad:
+
+   ```razor
+   @using Star.Shared.Components
+   ```
+
+
+
+2. **Implement the Loader*: Within your component, use the `StarLoader` component conditionally based on your loading stae:
+
+   ```razor
+   @if (IsLoading)
+   {
+       <StarLoader />
+   }
+   else
+   {
+       <!-- Your main content goes here -->
+   }
+   ```
+
+
+
+3. **Manage Loading State*: In your component's code-behind, manage the `IsLoading` flag appropriatey:
+
+   ```csharp
+   private bool IsLoading = false;
+
+   private async Task LoadDataAsync()
+   {
+       IsLoading = true;
+       StateHasChanged();
+
+       // Simulate data loading
+       await Task.Delay(2000);
+
+       IsLoading = false;
+       StateHasChanged();
+   }
+   ```
+
+
+
+---
+
+### 🎨 Customization Tips
+
+- **Color Scheme*: Adjust the `color` property in `.star-icon` to match your application's thme.
+
+- **Animation Speed*: Modify the `animation` duration in `.star-icon` to speed up or slow down the pulsing effct.
+
+- **Text Message*: Change the content of `.star-text` to provide more context to users during loadng.
+
+---
+
+Feel free to replicate this component across different parts of your application to maintain a consistent and branded loading experience. If you need further assistance or additional variants, don't hesitate to ask! 
+
