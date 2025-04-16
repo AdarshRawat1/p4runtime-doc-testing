@@ -1,3 +1,53 @@
+@* Shared/Charts/ProductTradeChart.razor *@
+@inject IOracleDataService DataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">OTC Product Types Booked (Last 7 Days)</h5>
+<div class="mb-3">
+    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
+    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
+</div>
+
+@if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<div id="productTradeChart" style="width: 100%; height: 400px;"></div>
+
+@code {
+    private string? ErrorMessage;
+
+    private async Task GenerateGraph(bool logScale)
+    {
+        try
+        {
+            var data = await DataService.GetOtcProductTradesAsync();
+            var labels = data.Select(d => d.ProductName).ToList();
+            var values = data.Select(d => (double)d.TotalTrades).ToList();
+
+            var chartData = new
+            {
+                labels,
+                values,
+                title = "OTC Product Types Booked in Last 7 Days",
+                xLabel = "Product Type",
+                yLabel = "Contracts"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+    }
+}
+
+
+
+
+
 ✅ Done! You've now got a modular component for **“OTC Product Types Booked (Last 7 Days)”** using Plotly.
 
 ---
