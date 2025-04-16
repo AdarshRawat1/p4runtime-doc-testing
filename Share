@@ -1,148 +1,126 @@
-// IOracleDataService.cs
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using Star.Models;
+Got it! If you're no longer allowed to use **Blazor Bootstrap**, no problem — we’ll switch to a **vanilla Blazor + CSS** approach that still gives you a **wave-style loading animation** ✅
 
-namespace Star.Services
-{
-    public interface IOracleDataService
-    {
-        Task<List<FeatureUsage>> GetFeatureUsageAsync();
-        Task<List<ProductTrade>> GetOtcProductTradesAsync();
+---
+
+### ✅ 1. Replace Bootstrap Placeholder with Custom Loader
+
+Here's a basic wave-style animation using CSS that works in pure Blazor:
+
+#### ✨ **LoaderMarkup.razor (Reusable Loader)**
+Create this in a new file under `Shared/Components/LoaderMarkup.razor`:
+
+```razor
+<div class="wave-loader">
+    <div class="bar"></div>
+    <div class="bar"></div>
+    <div class="bar"></div>
+    <div class="bar"></div>
+    <div class="bar"></div>
+</div>
+
+<style>
+    .wave-loader {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 150px;
+        gap: 6px;
     }
-}
 
-// OracleDataService.cs
-using Oracle.ManagedDataAccess.Client;
-using Star.Models;
-using Star.Services;
-using Microsoft.Extensions.Configuration;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
+    .wave-loader .bar {
+        width: 6px;
+        height: 40px;
+        background-color: #3498db;
+        animation: wave 1.2s infinite ease-in-out;
+    }
 
-namespace Star.Services
-{
-    public class OracleDataService : IOracleDataService
-    {
-        private readonly string _connectionString;
+    .wave-loader .bar:nth-child(2) {
+        animation-delay: 0.1s;
+    }
+    .wave-loader .bar:nth-child(3) {
+        animation-delay: 0.2s;
+    }
+    .wave-loader .bar:nth-child(4) {
+        animation-delay: 0.3s;
+    }
+    .wave-loader .bar:nth-child(5) {
+        animation-delay: 0.4s;
+    }
 
-        public OracleDataService(IConfiguration configuration)
-        {
-            _connectionString = configuration.GetConnectionString("OracleDb")
-                ?? throw new ArgumentNullException("Oracle connection string is not configured.");
+    @keyframes wave {
+        0%, 100% {
+            transform: scaleY(1);
         }
-
-        public async Task<List<FeatureUsage>> GetFeatureUsageAsync()
-        {
-            var featureUsageList = new List<FeatureUsage>();
-
-            try
-            {
-                using var conn = new OracleConnection(_connectionString);
-                await conn.OpenAsync();
-
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
-                    SELECT feature, COUNT(*) AS usage_count
-                    FROM star_action_audit
-                    WHERE mod_dt > TRUNC(SYSDATE) - 30
-                      AND feature_type = 'SEARCH'
-                    GROUP BY feature
-                    ORDER BY usage_count DESC
-                ";
-
-                using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    var feature = reader["feature"]?.ToString() ?? string.Empty;
-                    var usageCount = reader["usage_count"] != DBNull.Value
-                        ? Convert.ToInt32(reader["usage_count"]) : 0;
-
-                    featureUsageList.Add(new FeatureUsage
-                    {
-                        Feature = feature,
-                        UsageCount = usageCount
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                throw new Exception("Error fetching data from Oracle DB", ex);
-            }
-
-            return featureUsageList;
-        }
-
-        public async Task<List<ProductTrade>> GetOtcProductTradesAsync()
-        {
-            var result = new List<ProductTrade>();
-
-            try
-            {
-                using var conn = new OracleConnection(_connectionString);
-                await conn.OpenAsync();
-
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
-                    SELECT c.prd_typ_name,
-                           COUNT(c.prd_typ_name) AS total_trades
-                    FROM star_workflow w
-                    JOIN (
-                        SELECT a.*,
-                               CASE
-                                  WHEN a.prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
-                                  WHEN a.prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
-                                  WHEN a.prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
-                                  WHEN a.prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
-                                  WHEN a.prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
-                                  WHEN a.prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
-                                  WHEN a.prd_typ_cod = 'FRA' THEN 'FRA'
-                                  WHEN a.prd_typ_cod = 'CAP' THEN 'Cap'
-                                  WHEN a.prd_typ_cod = 'FLR' THEN 'Floor'
-                                  WHEN a.prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
-                                  WHEN a.prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
-                                  WHEN a.prd_typ_cod = 'OSP' THEN 'Swaption Pay'
-                                  WHEN a.prd_typ_cod = 'OSR' THEN 'Swaption Rec'
-                                  WHEN a.prd_typ_cod = 'OSS' THEN 'Swaption Strad'
-                                  WHEN a.prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
-                                  WHEN a.prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
-                                  WHEN a.prd_typ_cod = 'CSH' THEN 'Cashflow'
-                                  WHEN a.prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
-                                  WHEN a.prd_typ_cod = 'BME' THEN 'Container BME'
-                                  WHEN a.prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
-                                  WHEN a.prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
-                                  WHEN a.prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
-                                  ELSE a.prd_typ_cod
-                               END AS prd_typ_name
-                        FROM star_contract PARTITION(product_oth) a
-                    ) c ON c.con_no = w.con_no
-                    WHERE inp_dt > TRUNC(SYSDATE - 7)
-                      AND c.con_no = w.con_no
-                      AND c.mrr_typ_cod IN (0, 1, 6)
-                    GROUP BY c.prd_typ_name
-                    ORDER BY total_trades DESC
-                ";
-
-                using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    var name = reader["prd_typ_name"]?.ToString() ?? string.Empty;
-                    var count = reader["total_trades"] != DBNull.Value ? Convert.ToInt32(reader["total_trades"]) : 0;
-
-                    result.Add(new ProductTrade
-                    {
-                        ProductName = name,
-                        TotalTrades = count
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                throw new Exception("Error fetching OTC product trades", ex);
-            }
-
-            return result;
+        50% {
+            transform: scaleY(2);
         }
     }
+</style>
+```
+
+---
+
+### ✅ 2. Use it in your chart components like this:
+
+#### In `ProductTradeChart.razor`:
+
+```razor
+@if (IsLoading)
+{
+    <LoaderMarkup />
 }
+else
+{
+    <div id="productTradeChart" style="width: 100%; height: 400px;"></div>
+}
+```
+
+Add this at the top of the file:
+```razor
+@using Star.Shared.Components
+```
+
+---
+
+### ✅ 3. Don’t forget `IsLoading = true/false` in the `GenerateGraph()` method (as before):
+
+```razor
+private bool IsLoading = false;
+
+private async Task GenerateGraph(bool logScale)
+{
+    try
+    {
+        IsLoading = true;
+
+        var data = await DataService.GetOtcProductTradesAsync();
+        var labels = data.Select(d => d.ProductName).ToList();
+        var values = data.Select(d => (double)d.TotalTrades).ToList();
+
+        var chartData = new
+        {
+            labels,
+            values,
+            title = "OTC Product Types Booked in Last 7 Days",
+            xLabel = "Product Type",
+            yLabel = "Contracts"
+        };
+
+        await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
+    }
+    catch (Exception ex)
+    {
+        ErrorMessage = ex.Message;
+    }
+    finally
+    {
+        IsLoading = false;
+    }
+}
+```
+
+---
+
+✅ That’s it — now you have a fully custom wave loading animation with no dependencies.
+
+Want me to help migrate your existing chart components to use this approach too?
