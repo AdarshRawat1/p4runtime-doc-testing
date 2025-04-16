@@ -366,3 +366,94 @@ namespace Star.Services
 ---
 
 Let me know if you also lost the model `FeatureUsage.cs` — I’ll restore that too!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Yes, I can help you fix both things:
+
+---
+
+### 1. **Error: No registered service of type `IOracleDataService`**
+
+This error means that you forgot to register the Oracle service in `Program.cs`.
+
+#### ✅ Fix:
+Open `Program.cs` and **add the following line**:
+
+```csharp
+builder.Services.AddScoped<IOracleDataService, OracleDataService>();
+```
+
+Place it **after** the existing `AddServerSideBlazor()` line like this:
+
+```csharp
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+builder.Services.AddScoped<IOracleDataService, OracleDataService>();
+```
+
+---
+
+### 2. **Graph should render only when a button is clicked**
+
+Yes! I had implemented the graph rendering on click in the latest working version. Here's how it works:
+
+#### UI snippet:
+```razor
+<button class="btn btn-primary" @onclick="LoadDataAndShowGraph">Load Feature Usage Graph</button>
+
+@if (isChartVisible)
+{
+    <PlotlyChart Title="Feature Usage (Last 30 Days)" ChartId="featureUsageChart" />
+}
+```
+
+#### Backend snippet:
+```csharp
+private async Task LoadDataAndShowGraph()
+{
+    isChartVisible = true;
+
+    var data = await DataService.GetFeatureUsageAsync();
+
+    var labels = data.Select(d => d.Feature).ToList();
+    var values = data.Select(d => (double)d.UsageCount).ToList();
+
+    var chartData = new
+    {
+        labels,
+        values,
+        title = "Feature Usage in Last 30 Days",
+        xLabel = "Feature",
+        yLabel = "Count"
+    };
+
+    await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "featureUsageChart", chartData);
+}
+```
+
+---
+
+If you want, I can now regenerate a full clean working `.razor` file for this chart — just say the word.
