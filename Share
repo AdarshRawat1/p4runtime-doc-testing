@@ -1,8 +1,8 @@
-@* Shared/Charts/FeatureUsageChart.razor *@
+@* Shared/Charts/ProductTradeChart.razor *@
 @inject IOracleDataService DataService
 @inject IJSRuntime JSRuntime
 
-<h5 class="fw-semibold">Feature Usage</h5>
+<h5 class="fw-semibold">OTC Product Types Booked (Last 7 Days)</h5>
 <div class="mb-3">
     <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
     <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
@@ -13,7 +13,7 @@
     <div class="alert alert-danger">@ErrorMessage</div>
 }
 
-<div id="featureUsageChart" style="width: 100%; height: 400px;"></div>
+<div id="productTradeChart" style="width: 100%; height: 400px;"></div>
 
 @code {
     private string? ErrorMessage;
@@ -22,20 +22,20 @@
     {
         try
         {
-            var data = await DataService.GetFeatureUsageAsync();
-            var labels = data.Select(d => d.Feature).ToList();
-            var values = data.Select(d => (double)d.UsageCount).ToList();
+            var data = await DataService.GetOtcProductTradesAsync();
+            var labels = data.Select(d => d.ProductName).ToList();
+            var values = data.Select(d => (double)d.TotalTrades).ToList();
 
             var chartData = new
             {
                 labels,
                 values,
-                title = "Feature Usage (Last 30 Days)",
-                xLabel = "Feature",
-                yLabel = "Usage Count"
+                title = "OTC Product Types Booked in Last 7 Days",
+                xLabel = "Product Type",
+                yLabel = "Contracts"
             };
 
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "featureUsageChart", chartData, logScale);
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
         }
         catch (Exception ex)
         {
@@ -43,12 +43,3 @@
         }
     }
 }
-
-
-
-
-
-
-
-
-
