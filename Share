@@ -1,110 +1,134 @@
 
-@page "/feature-usage-graph"
-@inject IJSRuntime JSRuntime
 
-<h3>Feature Usage</h3>
 
-<button class="btn btn-outline-primary me-2" @onclick="LoadData">Load Data</button>
-<button class="btn btn-success" @onclick="RenderChart" disabled="@(!dataLoaded)">Render Chart</button>
+Awesome! Let’s begin 🚀
 
-@if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <div class="alert alert-danger mt-3">@ErrorMessage</div>
-}
-else if (!string.IsNullOrEmpty(HtmlContent))
-{
-    <div class="mt-3">@((MarkupString)HtmlContent)</div>
-    <div class="mt-4" id="featureUsageChart" style="width:100%;height:500px;"></div>
-}
-else if (isLoading)
-{
-    <p class="text-info mt-3">Loading data...</p>
-}
-else
-{
-    <p class="text-muted mt-3">Click 'Load Data' to begin.</p>
-}
+---
+
+### ✅ Step 1: Set Up the Modular Plotly Chart Component
+
+We’ll start by creating a reusable component named `PlotlyChart.razor`.
+
+---
+
+### 📁 File: `Shared/Charts/PlotlyChart.razor`
+
+```razor
+<div class="mb-5">
+    <h5>@Title</h5>
+    <div id="@ChartId" style="width:100%; height:400px;"></div>
+</div>
 
 @code {
-    private string HtmlContent = string.Empty;
-    private string ErrorMessage = string.Empty;
-    private List<string> labels = new();
-    private List<int> values = new();
-    private bool dataLoaded = false;
-    private bool isLoading = false;
+    [Parameter] public string ChartId { get; set; } = Guid.NewGuid().ToString();
+    [Parameter] public string Title { get; set; } = "Chart";
+    [Parameter] public List<string> Labels { get; set; } = new();
+    [Parameter] public List<int> Values { get; set; } = new();
+    [Inject] public IJSRuntime JSRuntime { get; set; } = default!;
 
-    private async Task LoadData()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        isLoading = true;
-        ErrorMessage = "";
-        HtmlContent = "";
-        labels.Clear();
-        values.Clear();
-        dataLoaded = false;
-
-        try
+        if (firstRender && Labels.Any() && Values.Any())
         {
-            using var conn = new Oracle.ManagedDataAccess.Client.OracleConnection(
-                "Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=eurvlid07179.xmp.net.intra)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=408uk101)));User Id=star;Password=bsc123;"
-            );
-            await conn.OpenAsync();
-
-            using var cmd = new Oracle.ManagedDataAccess.Client.OracleCommand(@"
-                SELECT feature, COUNT(*) AS usage_count
-                FROM star_action_audit
-                WHERE mod_dt > TRUNC(SYSDATE) - 30
-                  AND feature_type = 'SEARCH'
-                GROUP BY feature
-                ORDER BY usage_count DESC
-            ", conn);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            HtmlContent = "<ul class='list-group'>";
-            while (await reader.ReadAsync())
+            var chartData = new
             {
-                var feature = reader["feature"].ToString();
-                var count = Convert.ToInt32(reader["usage_count"]);
-                labels.Add(feature!);
-                values.Add(count);
-                HtmlContent += $"<li class='list-group-item d-flex justify-content-between'><span>{feature}</span><span class='badge bg-primary'>{count}</span></li>";
-            }
-            HtmlContent += "</ul>";
-            dataLoaded = true;
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = ex.Message;
-        }
-        finally
-        {
-            isLoading = false;
-        }
-    }
+                labels = Labels,
+                values = Values,
+                title = Title,
+                xLabel = "Feature",
+                yLabel = "Count"
+            };
 
-    private async Task RenderChart()
-    {
-        if (!dataLoaded) return;
-
-        var chartData = new
-        {
-            labels,
-            values,
-            title = "Feature Usage in Last 30 Days",
-            xLabel = "Feature",
-            yLabel = "Usage Count"
-        };
-
-        await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "featureUsageChart", chartData);
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", ChartId, chartData);
+        }
     }
 }
+```
+
+---
+
+### 📁 File: `wwwroot/js/plotlyInterop.js`
+
+```js
+window.renderPlotlyBarChart = function (chartId, chartData) {
+    const chartDiv = document.getElementById(chartId);
+    if (!chartDiv) {
+        console.warn("Chart container not found:", chartId);
+        return;
+    }
+
+    Plotly.newPlot(chartDiv, [{
+        x: chartData.labels,
+        y: chartData.values,
+        type: 'bar',
+        marker: { color: 'rgba(54, 162, 235, 0.6)' }
+    }], {
+        title: chartData.title,
+        xaxis: { title: chartData.xLabel },
+        yaxis: { title: chartData.yLabel }
+    });
+};
+```
+
+Place it inside: `wwwroot/js/plotlyInterop.js`
+
+---
+
+### 📄 Update `_Host.cshtml` (at the bottom before `</body>`)
+
+```html
+<script src="js/plotly/dist/plotly.min.js"></script>
+<script src="js/plotlyInterop.js"></script>
+<script src="_framework/blazor.server.js"></script>
+```
+
+---
+
+### ✅ Now: Send your **first query** and its chart type (bar, line, etc.)
+
+Once you send it, I’ll:
+- Add the service method
+- Create the model
+- Add it to `FeatureDashboard.razor` using the `PlotlyChart` component
+
+Ready when you are 💡
 
 
-Here’s your final updated page:
-
-Two buttons: “Load Data” and “Render Chart”
-
-Shows "Loading data..." only during fetch
-
-Renders HTML list and Plotly bar chart after successful
 
 
+
+
+
+
+Great catch! 🔍  
+You're absolutely right — in the **default Blazor Server template for .NET 6**, you'll usually see this setup:
+
+- ✅ `_Host.cshtml` defines the Blazor server rendering pipeline — it injects the layout.
+- ✅ `Pages/_Layout.cshtml` contains the actual `<html>`, `<head>`, and `<body>` tags.
+
+---
+
+### ✅ So: Where to put your script tags?
+
+👉 **Place the following script tags inside `_Layout.cshtml`**, **right before the closing `</body>` tag**:
+
+```html
+<script src="js/plotly/dist/plotly.min.js"></script>
+<script src="js/plotlyInterop.js"></script>
+<script src="_framework/blazor.server.js"></script>
+```
+
+📌 Why this order?
+- `plotly.min.js` → loads Plotly core
+- `plotlyInterop.js` → defines `renderPlotlyBarChart()`
+- `blazor.server.js` → Blazor framework starts last
+
+---
+
+### ⚠️ Important
+If you accidentally put your Plotly JS **after** `blazor.server.js`, you’ll get the `renderPlotlyBarChart is undefined` error — like earlier.
+
+---
+
+Let me know once this is set up ✅  
+Then we’ll continue and plug in your first query!
