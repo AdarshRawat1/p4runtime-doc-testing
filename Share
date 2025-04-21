@@ -1,20 +1,20 @@
-window.render3DPlot = (divId, chartData) => {
-    const trace = {
-        x: chartData.x,
-        y: chartData.y,
-        z: chartData.z,
-        type: 'bar3d', // This line may need to be adjusted if bar3d doesn't exist
-        name: '3D Chart'
-    };
-
-    const layout = {
-        title: chartData.title,
-        scene: {
-            xaxis: { title: chartData.xLabel },
-            yaxis: { title: chartData.yLabel },
-            zaxis: { title: chartData.zLabel }
-        }
-    };
-
-    Plotly.newPlot(divId, [trace], layout);
+var traces = new[]
+{
+    new
+    {
+        x = data.Select(d => d.Location),
+        y = data.Select(d => d.TotalTrades),
+        z = data.Select(d => d.ProductName),
+        type = "scatter3d",
+        mode = "markers",
+        marker = new
+        {
+            size = 8,
+            color = data.Select(d => d.TotalTrades),
+            colorscale = "Viridis",
+            opacity = 0.8
+        },
+        text = data.Select(d => $"{d.ProductName} - {d.TotalTrades}"),
+        hoverinfo = "text"
+    }
 };
