@@ -1,8 +1,8 @@
+@using Star.Models
 @inject IOracleDataService OracleDataService
 @inject IJSRuntime JSRuntime
 
-<h5 class="fw-semibold">OTC Product Types Booked (Last 7 Days)</h5>
-
+<h5 class="fw-semibold">OTC Product Types Booked in BNABPAR (Last 7 Days)</h5>
 <div class="mb-3">
     <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
     <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
@@ -10,14 +10,14 @@
 
 @if (IsLoading)
 {
-    <StarLoader />
+    <StarLoader Message="Fetching OTC product trades for BNABPAR..." />
 }
 else if (!string.IsNullOrEmpty(ErrorMessage))
 {
     <div class="alert alert-danger">@ErrorMessage</div>
 }
 
-<div id="productTradeChart" style="width: 100%; height: @(IsLoading ? "0px" : "400px"); overflow: hidden;"></div>
+<div id="bnabparTradeChart" style="width: 100%; height: 500px;" class="@(IsLoading ? "d-none" : "")"></div>
 
 @code {
     private bool IsLoading = false;
@@ -25,25 +25,51 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
 
     private async Task GenerateGraph(bool logScale)
     {
+        IsLoading = true;
+        ErrorMessage = null;
+
         try
         {
-            IsLoading = true;
-            ErrorMessage = null;
+            var data = await OracleDataService.GetOtcBnabparProductTradesAsync();
 
-            var data = await OracleDataService.GetOtcProductTradesAsync();
-            var labels = data.Select(d => d.ProductName).ToList();
-            var values = data.Select(d => (double)d.TotalTrades).ToList();
+            var locations = data.Select(d => d.Location).Distinct().ToList();
+            var products = data.Select(d => d.ProductName).Distinct().ToList();
 
-            var chartData = new
+            var productMap = products.ToDictionary(
+                product => product,
+                product => new List<int>(new int[locations.Count])
+            );
+
+            foreach (var record in data)
             {
-                labels,
-                values,
-                title = "OTC Product Types Booked in Last 7 Days",
-                xLabel = "Product Type",
-                yLabel = "Contracts"
+                int locIndex = locations.IndexOf(record.Location);
+                if (locIndex != -1)
+                {
+                    productMap[record.ProductName][locIndex] = record.TotalTrades;
+                }
+            }
+
+            var traces = productMap.Select(entry => new
+            {
+                x = locations,
+                y = entry.Value,
+                z = Enumerable.Repeat(entry.Key, locations.Count),
+                type = "bar3d",
+                name = entry.Key
+            }).ToArray();
+
+            var layout = new
+            {
+                title = "OTC Product Types Booked in BNABPAR (Last 7 Days)",
+                scene = new
+                {
+                    xaxis = new { title = "Location" },
+                    yaxis = new { title = "Contracts" },
+                    zaxis = new { title = "Product" }
+                }
             };
 
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
+            await JSRuntime.InvokeVoidAsync("render3DPlot", "bnabparTradeChart", traces, layout);
         }
         catch (Exception ex)
         {
@@ -54,431 +80,4 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
             IsLoading = false;
         }
     }
-}
-
-
-
-
-
-
-
-Perfect — since you’re using a modular component structure under `Shared/Charts/`, we’ll now enhance the **OTC Products Booked in Last 7 Days** graph component to include a smooth loading animation.
-
-Here’s a clean plan to update that component:
-
----
-
-### ✅ Files Involved
-- `Shared/Charts/OtcProductsChart.razor`
-- `wwwroot/css/star-loading.css` (if using custom animation)
-- Optional: `Shared/Components/StarLoader.razor` (if reusable)
-
----
-
-### 🔧 Step 1: Add `StarLoader.razor` if not present
-
-Create this inside `Shared/Components/`:
-
-```razor
-<!-- Shared/Components/StarLoader.razor -->
-<div class="star-loader-container">
-  <div class="star-loader"></div>
-  <p class="mt-2 text-muted">Fetching OTC product trade data...</p>
-</div>
-```
-
-And the CSS (in `wwwroot/css/star-loading.css`):
-
-```css
-.star-loader-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: 1rem;
-}
-
-.star-loader {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 5px solid #ddd;
-  border-top: 5px solid #007bff;
-  animation: spinStar 1s linear infinite;
-}
-
-@keyframes spinStar {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-```
-
-Then include in `index.html` or `_Layout.cshtml`:
-
-```html
-<link href="css/star-loading.css" rel="stylesheet" />
-```
-
----
-
-### 🧩 Step 2: Update `OtcProductsChart.razor`
-
-```razor
-@inject IOracleDataService OracleDataService
-@inject IJSRuntime JSRuntime
-
-<h5 class="fw-semibold">OTC Product Types Booked (Last 7 Days)</h5>
-
-<div class="mb-3">
-    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
-    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
-</div>
-
-@if (IsLoading)
-{
-    <StarLoader />
-}
-else if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <div class="alert alert-danger">@ErrorMessage</div>
-}
-
-<div id="productTradeChart" style="width: 100%; height: @(IsLoading ? "0px" : "400px"); overflow: hidden;"></div>
-
-@code {
-    private bool IsLoading = false;
-    private string? ErrorMessage;
-
-    private async Task GenerateGraph(bool logScale)
-    {
-        try
-        {
-            IsLoading = true;
-            ErrorMessage = null;
-
-            var data = await OracleDataService.GetOtcProductTradesAsync();
-            var labels = data.Select(d => d.ProductName).ToList();
-            var values = data.Select(d => (double)d.TotalTrades).ToList();
-
-            var chartData = new
-            {
-                labels,
-                values,
-                title = "OTC Product Types Booked in Last 7 Days",
-                xLabel = "Product Type",
-                yLabel = "Contracts"
-            };
-
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = ex.Message;
-        }
-        finally
-        {
-            IsLoading = false;
-        }
-    }
-}
-```
-
----
-
-### 🧪 Confirm It Works
-- When you click either **Show Normal** or **Show Zoomed**, the loading spinner should show first.
-- After data is fetched and rendered, it smoothly transitions into the chart.
-
-Ready to apply this pattern to the next graph afterward?
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Exactly — you’ve got it spot on. If we include graph-specific text like *“Fetching OTC product trade data…”* in the loader component itself, it breaks the modular structure because then you'd need a separate loader for each chart.
-
-### ✅ Recommended Modular Approach:
-We’ll **keep one universal loader**, say `StarLoader.razor`, with just a **generic loading animation and maybe the STAR logo spinning or bouncing gently**. Then, if needed, you can show graph-specific context *outside* the loader.
-
----
-
-### ✅ Example Structure
-
-**🗂 `Shared/Components/StarLoader.razor`**
-```razor
-<div class="star-loader-container">
-  <div class="star-loader"></div>
-</div>
-```
-
-**🎨 `wwwroot/css/star-loader.css`**
-```css
-.star-loader-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 1rem;
-}
-
-.star-loader {
-  width: 48px;
-  height: 48px;
-  background-image: url('/images/star-logo.svg'); /* Replace with actual logo path */
-  background-size: contain;
-  background-repeat: no-repeat;
-  animation: spin 1.2s linear infinite;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0); }
-  100% { transform: rotate(360deg); }
-}
-```
-
-> You can import this CSS globally in your `wwwroot/css/site.css` or include it in `_Layout.cshtml`.
-
----
-
-### ✅ In each chart (e.g. `ProductTradeChart.razor`)
-
-```razor
-@if (IsLoading)
-{
-    <StarLoader />
-}
-else if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <div class="alert alert-danger">@ErrorMessage</div>
-}
-else
-{
-    <div id="productTradeChart" style="width: 100%; height: 400px;"></div>
-}
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Great! Since you don’t have a STAR image yet, let’s go with a **clean, lightweight, modern CSS-only animation** that looks good in any theme and is fully reusable.
-
----
-
-### ✅ Step 1: Create `Shared/Components/StarLoader.razor`
-
-```razor
-<!-- Shared/Components/StarLoader.razor -->
-<div class="star-loader-container">
-    <div class="star-loader"></div>
-</div>
-
-<style>
-    .star-loader-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 2rem;
-    }
-
-    .star-loader {
-        width: 48px;
-        height: 48px;
-        border-radius: 50%;
-        border: 5px solid rgba(0, 0, 0, 0.1);
-        border-top-color: #007bff;
-        animation: starSpin 1s ease-in-out infinite;
-    }
-
-    @keyframes starSpin {
-        0% {
-            transform: rotate(0deg);
-        }
-        100% {
-            transform: rotate(360deg);
-        }
-    }
-</style>
-```
-
-✅ This will give you a smooth, modern spinner with no image dependency. You can change `border-top-color` to your brand color.
-
----
-
-### ✅ Step 2: Use in any chart component
-
-In `Shared/Charts/ProductTradeChart.razor`:
-
-```razor
-@if (IsLoading)
-{
-    <StarLoader />
-}
-else if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <div class="alert alert-danger">@ErrorMessage</div>
-}
-else
-{
-    <div id="productTradeChart" style="width: 100%; height: 400px;"></div>
-}
-```
-
----
-
-Let me know if you want a pulsing dots or bouncing loader variant instead. I can give a few styles to switch easily ✨
-
----
-
-Let me know if you want me to generate the full updated `StarLoader.razor` and CSS for you. Once done, we’ll implement this i
-n `ProductTradeChart.razor`, and then roll it out to others.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-public async Task<List<ProductTrade3D>> GetOtcBnabparProductTradesAsync()
-{
-    var result = new List<ProductTrade3D>();
-
-    try
-    {
-        using var conn = new OracleConnection(_connectionString);
-        await conn.OpenAsync();
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            WITH selection AS (
-                SELECT wrk.mo_loc_cod AS loc_cod,
-                       COUNT(con.con_no) AS total,
-                       DECODE(con.prd_typ_cod,
-                           'IR1', 'IR Swap (Fx/Fl)',
-                           'IR2', 'IR Swap (IMM)',
-                           'IR3', 'IR Swap (Fl/Fl)',
-                           'CC1', 'CCY (Fx/Fl)',
-                           'CC2', 'CCY (Fl/Fl)',
-                           'CC3', 'CCY (Fx/Fx)',
-                           'FRA', 'FRA',
-                           'CAP', 'Cap',
-                           'FLR', 'Floor',
-                           'CFS', 'Cap/Floor Straddle',
-                           'COL', 'Cap/Floor Collar',
-                           'OSP', 'Swaption Payer',
-                           'OSR', 'Swaption Receiver',
-                           'OSS', 'Swaption Straddle',
-                           'DFX', 'Deposit (Fixed)',
-                           'DFL', 'Deposit (Float)',
-                           'CSH', 'Cashflow',
-                           'BOC', 'Bond Option Call',
-                           'BOP', 'Bond Option Put',
-                           'BOS', 'Bond Option Straddle',
-                           'BME', 'Container BME',
-                           'IL1', 'Inflation swap (In/Fx)',
-                           'IL2', 'Inflation swap (In/Fl)',
-                           'IL3', 'Inflation Fixing Lock (In)',
-                           con.prd_typ_cod
-                       ) AS prd_typ_name
-                FROM star_contract PARTITION(product_oth) con
-                INNER JOIN star_workflow wrk ON con.con_no = wrk.con_no
-                WHERE con.ptf_no IN (
-                    SELECT ptf_no
-                    FROM crds.ptf
-                    WHERE mkp_cod = 'BNAB' AND loc_cod = 'PAR'
-                )
-                AND prd_typ_cod NOT LIKE 'FX_%'
-                AND con.inp_dt >= SYSDATE - 7
-                GROUP BY wrk.mo_loc_cod, con.prd_typ_cod
-            ),
-            locations AS (SELECT DISTINCT loc_cod FROM selection),
-            otc_prods AS (SELECT DISTINCT prd_typ_name FROM selection)
-            SELECT grid.loc_cod, NVL(sel.total, 0) AS total, grid.prd_typ_name
-            FROM (
-                SELECT locations.loc_cod AS loc_cod, otc_prods.prd_typ_name AS prd_typ_name
-                FROM locations, otc_prods
-            ) grid
-            LEFT OUTER JOIN selection sel ON grid.prd_typ_name = sel.prd_typ_name AND grid.loc_cod = sel.loc_cod
-            ORDER BY grid.loc_cod, grid.prd_typ_name";
-
-        using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            var location = reader["loc_cod"]?.ToString() ?? string.Empty;
-            var product = reader["prd_typ_name"]?.ToString() ?? string.Empty;
-            var count = reader["total"] != DBNull.Value ? Convert.ToInt32(reader["total"]) : 0;
-
-            result.Add(new ProductTrade3D
-            {
-                Location = location,
-                ProductName = product,
-                TotalTrades = count
-            });
-        }
-    }
-    catch (Exception ex)
-    {
-        throw new Exception("Error fetching BNABPAR OTC product trade data", ex);
-    }
-
-    return result;
 }
