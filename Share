@@ -1,112 +1,160 @@
-Below is a minimal, standalone Blazor Server page that pulls in Plotly.js and renders your “OTC product types in 3D” graph with some hard‑coded sample data. Once you confirm it’s working, we can wire it up to your real `IOracleDataService.GetOtcProductTradesAsync()` and drop it into your product menu.
-
----
-
-### 1. Add Plotly.js & your interop helper
-
-**a)** In **_Layout.cshtml** (or **_Host.cshtml** if you’re using an Empty template), just before the closing `</body>` add:
-
-```html
-    <!-- Plotly.js -->
-    <script src="~/js/plotly/dist/plotly.min.js"></script>
-    <!-- our little interop shim -->
-    <script src="~/js/plotlyInterop.js"></script>
-```
-
-Make sure you physically place the `plotly.min.js` you downloaded under **wwwroot/js/plotly/dist/**, and create **wwwroot/js/plotlyInterop.js** with:
-
-```js
-// wwwroot/js/plotlyInterop.js
-window.renderPlotly3D = (chartId, xLabels, yLabels, zValues, title) => {
-  // build one trace per Y‑category (location)
-  const traces = yLabels.map((y, yi) => ({
-    x:     xLabels,
-    y:     Array(xLabels.length).fill(y),
-    z:     zValues[yi],
-    name:  y,
-    type:  'scatter3d',
-    mode:  'lines+markers',
-    line: { width: 4 }
-  }));
-
-  const layout = {
-    title: title,
-    scene: {
-      xaxis: { title: 'Product' },
-      yaxis: { title: 'Location' },
-      zaxis: { title: 'Deals' }
-    },
-    margin: { l:0, r:0, b:0, t:30 }
-  };
-
-  Plotly.newPlot(chartId, traces, layout);
-};
-```
-
----
-
-### 2. Create your test page
-
-**/Pages/Test3D.razor**
-
-```razor
-@page "/test3d"
+@* Shared/Components/Charts/FeatureUsageChart.razor *@
+@using Star.Shared.Components
+@inject IOracleDataService OracleDataService
 @inject IJSRuntime JSRuntime
 
-<h3 class="mb-4">3D OTC Product Types (Demo Data)</h3>
-
+<h5 class="fw-semibold">Feature Usage</h5>
 <div class="mb-3">
-  <button class="btn btn-primary" @onclick="DrawDemo">Render 3D Graph</button>
+    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)" disabled="@IsLoading">
+        @(IsLoading ? "Loading…" : "Show Normal")
+    </button>
+    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)" disabled="@IsLoading">
+        @(IsLoading ? "Loading…" : "Show Zoomed")
+    </button>
 </div>
 
-<div id="chart3d" style="width:100%;height:500px;"></div>
+@if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+@if (Labels.Count > 0)
+{
+    <div class="small text-muted mb-2">Data loaded; rendering chart…</div>
+    <ul class="mb-3">
+        @for (int i = 0; i < Labels.Count; i++)
+        {
+            <li>@Labels[i]: @Values[i]</li>
+        }
+    </ul>
+
+    @if (IsLoading)
+    {
+        <StarLoader />
+    }
+
+    <div id="featureUsageChart" class="plotly-container visible" style="height:400px;"></div>
+}
 
 @code {
-  private async Task DrawDemo()
-  {
-    // demo X and Y categories
-    var products  = new[] { "IR Swap (Fx/Fl)", "CCY (Fx/Fl)", "FRA", "Cap" };
-    var locations = new[] { "PAR", "LON", "SIN" };
+    private bool IsLoading = false;
+    private string? ErrorMessage;
+    private List<string> Labels = new();
+    private List<double> Values = new();
 
-    // demo Z values: deals per (location × product)
-    // zValues[locationIndex][productIndex]
-    var deals = new double[][]
+    private async Task GenerateGraph(bool logScale)
     {
-      new double[] { 6, 2, 4, 1 },  // PAR
-      new double[] { 3, 5, 2, 0 },  // LON
-      new double[] { 1, 0, 3, 2 }   // SIN
-    };
+        IsLoading = true;
+        ErrorMessage = null;
+        StateHasChanged();
 
-    await JSRuntime.InvokeVoidAsync(
-      "renderPlotly3D",
-      "chart3d",
-      products,
-      locations,
-      deals,
-      "OTC product types booked in last 7 days"
-    );
-  }
+        try
+        {
+            var data = await OracleDataService.GetFeatureUsageAsync();
+            Labels = data.Select(d => d.Feature).ToList();
+            Values = data.Select(d => (double)d.UsageCount).ToList();
+            StateHasChanged();
+
+            await JSRuntime.InvokeVoidAsync(
+                "renderPlotlyBarChart",
+                "featureUsageChart",
+                new { labels = Labels, values = Values, title = "Feature Usage (Last 30 Days)", xLabel = "Feature", yLabel = "Usage Count" },
+                logScale
+            );
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
 }
-```
 
----
 
-### 3. How it works
 
-1. **Button** → calls your C# `DrawDemo()`  
-2. `DrawDemo()` sets up 3 arrays:  
-   - **X** = product names  
-   - **Y** = location codes  
-   - **Z** = 2‑D array of deal counts  
-3. Via JS interop we pass them to `renderPlotly3D(…)`  
-4. That helper builds **one** 3D ​`scatter3d`​ trace per location, all overlaid, and calls `Plotly.newPlot()`  
 
----
 
-#### Next steps
 
-1. Run **/test3d** and click **Render 3D Graph**.  
-2. If it looks right, we’ll swap out the hard‑coded arrays for your real Oracle data (flattened into X, Y and Z arrays).  
-3. Finally we’ll move this into your “Products” section and wire up the menu.
 
-Let me know once you’ve tried **/test3d**, or if you hit any 404s / missing JS errors!
+
+
+
+@* Shared/Components/Charts/ProductTradeChart.razor *@
+@using Star.Shared.Components
+@inject IOracleDataService OracleDataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">OTC Product Types Booked (Last 7 Days)</h5>
+<div class="mb-3">
+    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)" disabled="@IsLoading">
+        @(IsLoading ? "Loading…" : "Show Normal")
+    </button>
+    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)" disabled="@IsLoading">
+        @(IsLoading ? "Loading…" : "Show Zoomed")
+    </button>
+</div>
+
+@if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+@if (Labels.Count > 0)
+{
+    <div class="small text-muted mb-2">Data loaded; rendering chart…</div>
+    <ul class="mb-3">
+        @for (int i = 0; i < Labels.Count; i++)
+        {
+            <li>@Labels[i]: @Values[i]</li>
+        }
+    </ul>
+
+    @if (IsLoading)
+    {
+        <StarLoader />
+    }
+
+    <div id="productTradeChart" class="plotly-container visible" style="height:400px;"></div>
+}
+
+@code {
+    private bool IsLoading = false;
+    private string? ErrorMessage;
+    private List<string> Labels = new();
+    private List<double> Values = new();
+
+    private async Task GenerateGraph(bool logScale)
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var data = await OracleDataService.GetOtcProductTradesAsync();
+            Labels = data.Select(d => d.ProductName).ToList();
+            Values = data.Select(d => (double)d.TotalTrades).ToList();
+            StateHasChanged();
+
+            await JSRuntime.InvokeVoidAsync(
+                "renderPlotlyBarChart",
+                "productTradeChart",
+                new { labels = Labels, values = Values, title = "OTC Product Types Booked (Last 7 Days)", xLabel = "Product Type", yLabel = "Contracts" },
+                logScale
+            );
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
+}
