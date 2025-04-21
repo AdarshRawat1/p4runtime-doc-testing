@@ -1,20 +1,57 @@
-var traces = new[]
+private async Task GenerateGraph(bool logScale)
 {
-    new
+    IsLoading = true;
+    ErrorMessage = null;
+
+    try
     {
-        x = data.Select(d => d.Location),
-        y = data.Select(d => d.TotalTrades),
-        z = data.Select(d => d.ProductName),
-        type = "scatter3d",
-        mode = "markers",
-        marker = new
+        var data = await OracleDataService.GetOtcBnabparProductTradesAsync();
+
+        var x = data.Select(d => d.Location).ToList();
+        var y = data.Select(d => (double)d.TotalTrades).ToList();
+        var z = data.Select(d => d.ProductName).ToList();
+        var text = data.Select(d => d.ProductName + " - " + d.TotalTrades).ToList();
+
+        var traces = new object[]
         {
-            size = 8,
-            color = data.Select(d => d.TotalTrades),
-            colorscale = "Viridis",
-            opacity = 0.8
-        },
-        text = data.Select(d => $"{d.ProductName} - {d.TotalTrades}"),
-        hoverinfo = "text"
+            new
+            {
+                x,
+                y,
+                z,
+                text,
+                type = "scatter3d",
+                mode = "markers",
+                marker = new
+                {
+                    size = 8,
+                    color = y,
+                    colorscale = "Viridis",
+                    opacity = 0.8
+                },
+                hoverinfo = "text"
+            }
+        };
+
+        var layout = new
+        {
+            title = "OTC Product Types Booked in BNABPAR (Last 7 Days)",
+            scene = new
+            {
+                xaxis = new { title = "Location" },
+                yaxis = new { title = "Contracts" },
+                zaxis = new { title = "Product" }
+            }
+        };
+
+        await JSRuntime.InvokeVoidAsync("render3DPlot", "bnabparTradeChart", traces, layout);
     }
-};
+    catch (Exception ex)
+    {
+        ErrorMessage = ex.Message;
+    }
+    finally
+    {
+        IsLoading = false;
+    }
+}
