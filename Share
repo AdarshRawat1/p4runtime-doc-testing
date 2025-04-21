@@ -372,4 +372,113 @@ Let me know if you want a pulsing dots or bouncing loader variant instead. I can
 
 ---
 
-Let me know if you want me to generate the full updated `StarLoader.razor` and CSS for you. Once done, we’ll implement this in `ProductTradeChart.razor`, and then roll it out to others.
+Let me know if you want me to generate the full updated `StarLoader.razor` and CSS for you. Once done, we’ll implement this i
+n `ProductTradeChart.razor`, and then roll it out to others.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+public async Task<List<ProductTrade3D>> GetOtcBnabparProductTradesAsync()
+{
+    var result = new List<ProductTrade3D>();
+
+    try
+    {
+        using var conn = new OracleConnection(_connectionString);
+        await conn.OpenAsync();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            WITH selection AS (
+                SELECT wrk.mo_loc_cod AS loc_cod,
+                       COUNT(con.con_no) AS total,
+                       DECODE(con.prd_typ_cod,
+                           'IR1', 'IR Swap (Fx/Fl)',
+                           'IR2', 'IR Swap (IMM)',
+                           'IR3', 'IR Swap (Fl/Fl)',
+                           'CC1', 'CCY (Fx/Fl)',
+                           'CC2', 'CCY (Fl/Fl)',
+                           'CC3', 'CCY (Fx/Fx)',
+                           'FRA', 'FRA',
+                           'CAP', 'Cap',
+                           'FLR', 'Floor',
+                           'CFS', 'Cap/Floor Straddle',
+                           'COL', 'Cap/Floor Collar',
+                           'OSP', 'Swaption Payer',
+                           'OSR', 'Swaption Receiver',
+                           'OSS', 'Swaption Straddle',
+                           'DFX', 'Deposit (Fixed)',
+                           'DFL', 'Deposit (Float)',
+                           'CSH', 'Cashflow',
+                           'BOC', 'Bond Option Call',
+                           'BOP', 'Bond Option Put',
+                           'BOS', 'Bond Option Straddle',
+                           'BME', 'Container BME',
+                           'IL1', 'Inflation swap (In/Fx)',
+                           'IL2', 'Inflation swap (In/Fl)',
+                           'IL3', 'Inflation Fixing Lock (In)',
+                           con.prd_typ_cod
+                       ) AS prd_typ_name
+                FROM star_contract PARTITION(product_oth) con
+                INNER JOIN star_workflow wrk ON con.con_no = wrk.con_no
+                WHERE con.ptf_no IN (
+                    SELECT ptf_no
+                    FROM crds.ptf
+                    WHERE mkp_cod = 'BNAB' AND loc_cod = 'PAR'
+                )
+                AND prd_typ_cod NOT LIKE 'FX_%'
+                AND con.inp_dt >= SYSDATE - 7
+                GROUP BY wrk.mo_loc_cod, con.prd_typ_cod
+            ),
+            locations AS (SELECT DISTINCT loc_cod FROM selection),
+            otc_prods AS (SELECT DISTINCT prd_typ_name FROM selection)
+            SELECT grid.loc_cod, NVL(sel.total, 0) AS total, grid.prd_typ_name
+            FROM (
+                SELECT locations.loc_cod AS loc_cod, otc_prods.prd_typ_name AS prd_typ_name
+                FROM locations, otc_prods
+            ) grid
+            LEFT OUTER JOIN selection sel ON grid.prd_typ_name = sel.prd_typ_name AND grid.loc_cod = sel.loc_cod
+            ORDER BY grid.loc_cod, grid.prd_typ_name";
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var location = reader["loc_cod"]?.ToString() ?? string.Empty;
+            var product = reader["prd_typ_name"]?.ToString() ?? string.Empty;
+            var count = reader["total"] != DBNull.Value ? Convert.ToInt32(reader["total"]) : 0;
+
+            result.Add(new ProductTrade3D
+            {
+                Location = location,
+                ProductName = product,
+                TotalTrades = count
+            });
+        }
+    }
+    catch (Exception ex)
+    {
+        throw new Exception("Error fetching BNABPAR OTC product trade data", ex);
+    }
+
+    return result;
+}
