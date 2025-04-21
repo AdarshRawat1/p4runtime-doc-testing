@@ -189,3 +189,93 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
 - After data is fetched and rendered, it smoothly transitions into the chart.
 
 Ready to apply this pattern to the next graph afterward?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Exactly — you’ve got it spot on. If we include graph-specific text like *“Fetching OTC product trade data…”* in the loader component itself, it breaks the modular structure because then you'd need a separate loader for each chart.
+
+### ✅ Recommended Modular Approach:
+We’ll **keep one universal loader**, say `StarLoader.razor`, with just a **generic loading animation and maybe the STAR logo spinning or bouncing gently**. Then, if needed, you can show graph-specific context *outside* the loader.
+
+---
+
+### ✅ Example Structure
+
+**🗂 `Shared/Components/StarLoader.razor`**
+```razor
+<div class="star-loader-container">
+  <div class="star-loader"></div>
+</div>
+```
+
+**🎨 `wwwroot/css/star-loader.css`**
+```css
+.star-loader-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1rem;
+}
+
+.star-loader {
+  width: 48px;
+  height: 48px;
+  background-image: url('/images/star-logo.svg'); /* Replace with actual logo path */
+  background-size: contain;
+  background-repeat: no-repeat;
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0); }
+  100% { transform: rotate(360deg); }
+}
+```
+
+> You can import this CSS globally in your `wwwroot/css/site.css` or include it in `_Layout.cshtml`.
+
+---
+
+### ✅ In each chart (e.g. `ProductTradeChart.razor`)
+
+```razor
+@if (IsLoading)
+{
+    <StarLoader />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+else
+{
+    <div id="productTradeChart" style="width: 100%; height: 400px;"></div>
+}
+```
+
+---
+
+Let me know if you want me to generate the full updated `StarLoader.razor` and CSS for you. Once done, we’ll implement this in `ProductTradeChart.razor`, and then roll it out to others.
