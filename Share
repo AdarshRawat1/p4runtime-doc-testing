@@ -1,83 +1,20 @@
-@using Star.Models
-@inject IOracleDataService OracleDataService
-@inject IJSRuntime JSRuntime
+window.render3DPlot = (divId, chartData) => {
+    const trace = {
+        x: chartData.x,
+        y: chartData.y,
+        z: chartData.z,
+        type: 'bar3d', // This line may need to be adjusted if bar3d doesn't exist
+        name: '3D Chart'
+    };
 
-<h5 class="fw-semibold">OTC Product Types Booked in BNABPAR (Last 7 Days)</h5>
-<div class="mb-3">
-    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
-    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
-</div>
-
-@if (IsLoading)
-{
-    <StarLoader Message="Fetching OTC product trades for BNABPAR..." />
-}
-else if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <div class="alert alert-danger">@ErrorMessage</div>
-}
-
-<div id="bnabparTradeChart" style="width: 100%; height: 500px;" class="@(IsLoading ? "d-none" : "")"></div>
-
-@code {
-    private bool IsLoading = false;
-    private string? ErrorMessage;
-
-    private async Task GenerateGraph(bool logScale)
-    {
-        IsLoading = true;
-        ErrorMessage = null;
-
-        try
-        {
-            var data = await OracleDataService.GetOtcBnabparProductTradesAsync();
-
-            var locations = data.Select(d => d.Location).Distinct().ToList();
-            var products = data.Select(d => d.ProductName).Distinct().ToList();
-
-            var productMap = products.ToDictionary(
-                product => product,
-                product => new List<int>(new int[locations.Count])
-            );
-
-            foreach (var record in data)
-            {
-                int locIndex = locations.IndexOf(record.Location);
-                if (locIndex != -1)
-                {
-                    productMap[record.ProductName][locIndex] = record.TotalTrades;
-                }
-            }
-
-            var traces = productMap.Select(entry => new
-            {
-                x = locations,
-                y = entry.Value,
-                z = Enumerable.Repeat(entry.Key, locations.Count),
-                type = "bar3d",
-                name = entry.Key
-            }).ToArray();
-
-            var layout = new
-            {
-                title = "OTC Product Types Booked in BNABPAR (Last 7 Days)",
-                scene = new
-                {
-                    xaxis = new { title = "Location" },
-                    yaxis = new { title = "Contracts" },
-                    zaxis = new { title = "Product" }
-                }
-            };
-
-            await JSRuntime.InvokeVoidAsync("render3DPlot", "bnabparTradeChart", traces, layout);
+    const layout = {
+        title: chartData.title,
+        scene: {
+            xaxis: { title: chartData.xLabel },
+            yaxis: { title: chartData.yLabel },
+            zaxis: { title: chartData.zLabel }
         }
-        catch (Exception ex)
-        {
-            ErrorMessage = ex.Message;
-        }
-        finally
-        {
-            IsLoading = false;
-        }
-    }
-}
+    };
+
+    Plotly.newPlot(divId, [trace], layout);
+};
