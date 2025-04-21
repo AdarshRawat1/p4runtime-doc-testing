@@ -55,3 +55,137 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
         }
     }
 }
+
+
+
+
+
+
+
+Perfect — since you’re using a modular component structure under `Shared/Charts/`, we’ll now enhance the **OTC Products Booked in Last 7 Days** graph component to include a smooth loading animation.
+
+Here’s a clean plan to update that component:
+
+---
+
+### ✅ Files Involved
+- `Shared/Charts/OtcProductsChart.razor`
+- `wwwroot/css/star-loading.css` (if using custom animation)
+- Optional: `Shared/Components/StarLoader.razor` (if reusable)
+
+---
+
+### 🔧 Step 1: Add `StarLoader.razor` if not present
+
+Create this inside `Shared/Components/`:
+
+```razor
+<!-- Shared/Components/StarLoader.razor -->
+<div class="star-loader-container">
+  <div class="star-loader"></div>
+  <p class="mt-2 text-muted">Fetching OTC product trade data...</p>
+</div>
+```
+
+And the CSS (in `wwwroot/css/star-loading.css`):
+
+```css
+.star-loader-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.star-loader {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 5px solid #ddd;
+  border-top: 5px solid #007bff;
+  animation: spinStar 1s linear infinite;
+}
+
+@keyframes spinStar {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+```
+
+Then include in `index.html` or `_Layout.cshtml`:
+
+```html
+<link href="css/star-loading.css" rel="stylesheet" />
+```
+
+---
+
+### 🧩 Step 2: Update `OtcProductsChart.razor`
+
+```razor
+@inject IOracleDataService OracleDataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">OTC Product Types Booked (Last 7 Days)</h5>
+
+<div class="mb-3">
+    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
+    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
+</div>
+
+@if (IsLoading)
+{
+    <StarLoader />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<div id="productTradeChart" style="width: 100%; height: @(IsLoading ? "0px" : "400px"); overflow: hidden;"></div>
+
+@code {
+    private bool IsLoading = false;
+    private string? ErrorMessage;
+
+    private async Task GenerateGraph(bool logScale)
+    {
+        try
+        {
+            IsLoading = true;
+            ErrorMessage = null;
+
+            var data = await OracleDataService.GetOtcProductTradesAsync();
+            var labels = data.Select(d => d.ProductName).ToList();
+            var values = data.Select(d => (double)d.TotalTrades).ToList();
+
+            var chartData = new
+            {
+                labels,
+                values,
+                title = "OTC Product Types Booked in Last 7 Days",
+                xLabel = "Product Type",
+                yLabel = "Contracts"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
+```
+
+---
+
+### 🧪 Confirm It Works
+- When you click either **Show Normal** or **Show Zoomed**, the loading spinner should show first.
+- After data is fetched and rendered, it smoothly transitions into the chart.
+
+Ready to apply this pattern to the next graph afterward?
