@@ -1,11 +1,4 @@
-window.render3DPlot = (chartId, traces, layout) => {
-    const chartDiv = document.getElementById(chartId);
-    if (!chartDiv) {
-        console.error(`Element with ID '${chartId}' not found.`);
-        return;
-    }
-
-    Plotly.newPlot(chartDiv, traces, layout, {
-        responsive: true
-    });
-};
+  foreach (var item in data)
+            {
+                Console.WriteLine($"📦 Product: {item.ProductName}, 📍 Location: {item.Location}, 🔢 Count: {item.TotalTrades}");
+            }
