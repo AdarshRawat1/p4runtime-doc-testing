@@ -276,6 +276,100 @@ else
 }
 ```
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Great! Since you don’t have a STAR image yet, let’s go with a **clean, lightweight, modern CSS-only animation** that looks good in any theme and is fully reusable.
+
+---
+
+### ✅ Step 1: Create `Shared/Components/StarLoader.razor`
+
+```razor
+<!-- Shared/Components/StarLoader.razor -->
+<div class="star-loader-container">
+    <div class="star-loader"></div>
+</div>
+
+<style>
+    .star-loader-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 2rem;
+    }
+
+    .star-loader {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        border: 5px solid rgba(0, 0, 0, 0.1);
+        border-top-color: #007bff;
+        animation: starSpin 1s ease-in-out infinite;
+    }
+
+    @keyframes starSpin {
+        0% {
+            transform: rotate(0deg);
+        }
+        100% {
+            transform: rotate(360deg);
+        }
+    }
+</style>
+```
+
+✅ This will give you a smooth, modern spinner with no image dependency. You can change `border-top-color` to your brand color.
+
+---
+
+### ✅ Step 2: Use in any chart component
+
+In `Shared/Charts/ProductTradeChart.razor`:
+
+```razor
+@if (IsLoading)
+{
+    <StarLoader />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+else
+{
+    <div id="productTradeChart" style="width: 100%; height: 400px;"></div>
+}
+```
+
+---
+
+Let me know if you want a pulsing dots or bouncing loader variant instead. I can give a few styles to switch easily ✨
+
 ---
 
 Let me know if you want me to generate the full updated `StarLoader.razor` and CSS for you. Once done, we’ll implement this in `ProductTradeChart.razor`, and then roll it out to others.
