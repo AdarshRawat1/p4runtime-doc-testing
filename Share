@@ -1,151 +1,49 @@
-@* Shared/Components/Charts/FeatureUsageChart.razor *@
-@using Star.Shared.Components
-@inject IOracleDataService OracleDataService
-@inject IJSRuntime JSRuntime
-
-<h5 class="fw-semibold">Feature Usage</h5>
-<div class="mb-3">
-    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)" disabled="@IsLoading">
-        @(IsLoading ? "Loading…" : "Show Normal")
-    </button>
-    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)" disabled="@IsLoading">
-        @(IsLoading ? "Loading…" : "Show Zoomed")
-    </button>
-</div>
-
-@if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <div class="alert alert-danger">@ErrorMessage</div>
-}
-
-@if (Labels.Count > 0)
-{
-    <div class="small text-muted mb-2">Data loaded; rendering chart…</div>
-    <ul class="mb-3">
-        @for (int i = 0; i < Labels.Count; i++)
-        {
-            <li>@Labels[i]: @Values[i]</li>
-        }
-    </ul>
-
-    @if (IsLoading)
-    {
-        <StarLoader />
-    }
-
-    <div id="featureUsageChart" class="plotly-container visible" style="height:400px;"></div>
-}
-
-@code {
-    private bool IsLoading = false;
-    private string? ErrorMessage;
-    private List<string> Labels = new();
-    private List<double> Values = new();
-
-    private async Task GenerateGraph(bool logScale)
-    {
-        IsLoading = true;
-        ErrorMessage = null;
-        StateHasChanged();
-
-        try
-        {
-            var data = await OracleDataService.GetFeatureUsageAsync();
-            Labels = data.Select(d => d.Feature).ToList();
-            Values = data.Select(d => (double)d.UsageCount).ToList();
-            StateHasChanged();
-
-            await JSRuntime.InvokeVoidAsync(
-                "renderPlotlyBarChart",
-                "featureUsageChart",
-                new { labels = Labels, values = Values, title = "Feature Usage (Last 30 Days)", xLabel = "Feature", yLabel = "Usage Count" },
-                logScale
-            );
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = ex.Message;
-        }
-        finally
-        {
-            IsLoading = false;
-            StateHasChanged();
-        }
-    }
-}
-
-
-
-
-
-
-
-
-
-
-@* Shared/Components/Charts/ProductTradeChart.razor *@
-@using Star.Shared.Components
 @inject IOracleDataService OracleDataService
 @inject IJSRuntime JSRuntime
 
 <h5 class="fw-semibold">OTC Product Types Booked (Last 7 Days)</h5>
+
 <div class="mb-3">
-    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)" disabled="@IsLoading">
-        @(IsLoading ? "Loading…" : "Show Normal")
-    </button>
-    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)" disabled="@IsLoading">
-        @(IsLoading ? "Loading…" : "Show Zoomed")
-    </button>
+    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
+    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
 </div>
 
-@if (!string.IsNullOrEmpty(ErrorMessage))
+@if (IsLoading)
+{
+    <StarLoader />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
 {
     <div class="alert alert-danger">@ErrorMessage</div>
 }
 
-@if (Labels.Count > 0)
-{
-    <div class="small text-muted mb-2">Data loaded; rendering chart…</div>
-    <ul class="mb-3">
-        @for (int i = 0; i < Labels.Count; i++)
-        {
-            <li>@Labels[i]: @Values[i]</li>
-        }
-    </ul>
-
-    @if (IsLoading)
-    {
-        <StarLoader />
-    }
-
-    <div id="productTradeChart" class="plotly-container visible" style="height:400px;"></div>
-}
+<div id="productTradeChart" style="width: 100%; height: @(IsLoading ? "0px" : "400px"); overflow: hidden;"></div>
 
 @code {
     private bool IsLoading = false;
     private string? ErrorMessage;
-    private List<string> Labels = new();
-    private List<double> Values = new();
 
     private async Task GenerateGraph(bool logScale)
     {
-        IsLoading = true;
-        ErrorMessage = null;
-        StateHasChanged();
-
         try
         {
-            var data = await OracleDataService.GetOtcProductTradesAsync();
-            Labels = data.Select(d => d.ProductName).ToList();
-            Values = data.Select(d => (double)d.TotalTrades).ToList();
-            StateHasChanged();
+            IsLoading = true;
+            ErrorMessage = null;
 
-            await JSRuntime.InvokeVoidAsync(
-                "renderPlotlyBarChart",
-                "productTradeChart",
-                new { labels = Labels, values = Values, title = "OTC Product Types Booked (Last 7 Days)", xLabel = "Product Type", yLabel = "Contracts" },
-                logScale
-            );
+            var data = await OracleDataService.GetOtcProductTradesAsync();
+            var labels = data.Select(d => d.ProductName).ToList();
+            var values = data.Select(d => (double)d.TotalTrades).ToList();
+
+            var chartData = new
+            {
+                labels,
+                values,
+                title = "OTC Product Types Booked in Last 7 Days",
+                xLabel = "Product Type",
+                yLabel = "Contracts"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "productTradeChart", chartData, logScale);
         }
         catch (Exception ex)
         {
@@ -154,7 +52,6 @@
         finally
         {
             IsLoading = false;
-            StateHasChanged();
         }
     }
 }
