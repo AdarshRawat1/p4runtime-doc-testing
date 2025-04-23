@@ -24,28 +24,86 @@ namespace Star.Models
 Add this to your `OracleDataService.cs`:
 
 ```csharp
+
 public async Task<List<MarketEventStat>> GetMarketEventStatsAsync()
 {
-    var results = new List<MarketEventStat>();
+    var result = new List<MarketEventStat>();
 
-    using var conn = new OracleConnection(_connectionString);
-    await conn.OpenAsync();
-
-    using var cmd = conn.CreateCommand();
-    cmd.CommandText = @"-- your entire SQL query pasted here exactly as sent --";
-
-    using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync())
+    try
     {
-        results.Add(new MarketEventStat
+        using var conn = new OracleConnection(_connectionString);
+        await conn.OpenAsync();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            WITH clearing AS (
+              SELECT m.con_no, c.clr_org
+              FROM star_mkt_ops m
+              JOIN star_clearing c ON c.con_no = m.con_no
+              WHERE m.mkt_evt_type = 'RPTY'
+                AND m.mev_sub_type = 'UNS'
+                AND m.mod_dt > (SYSDATE - 30)
+                AND m.status <> 'PROP'
+                AND m.mkt_evt_type <> 'UNDO'
+            ),
+            m AS (
+              SELECT a.*,
+                CASE
+                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'PNV' THEN 'Partial Remaining Party'
+                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS'
+                       AND EXISTS (SELECT 1 FROM clearing WHERE clr_org = 16582 AND con_no = a.con_no) THEN 'LCH. Clearnet LTD'
+                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS'
+                       AND EXISTS (SELECT 1 FROM clearing WHERE clr_org = 226198 AND con_no = a.con_no) THEN 'Japan Securities Clearing Corp'
+                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS'
+                       AND EXISTS (SELECT 1 FROM clearing WHERE clr_org = 7048 AND con_no = a.con_no) THEN 'Chicago Mercantile Exchange'
+                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS'
+                       AND EXISTS (SELECT 1 FROM clearing WHERE clr_org = 653 AND con_no = a.con_no) THEN 'Banco Central Do Brasil'
+                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS' THEN 'Remaining Party'
+                  WHEN a.mkt_evt_type = 'UWIN' THEN 'Unwind'
+                  WHEN a.mkt_evt_type = 'STIN' THEN 'Step In'
+                  WHEN a.mkt_evt_type = 'SOUT' THEN 'Step Out'
+                  WHEN a.mkt_evt_type = 'REST' THEN 'Restructure'
+                  WHEN a.mkt_evt_type = 'PTFR' THEN 'Portfolio Reassignment'
+                  WHEN a.mkt_evt_type = 'EXP' THEN 'Expiry'
+                  WHEN a.mkt_evt_type = 'EP' THEN 'Physical exercise'
+                  WHEN a.mkt_evt_type = 'EC' THEN 'Cash exercise'
+                  WHEN a.mkt_evt_type = 'DEL' THEN 'Delete'
+                  WHEN a.mkt_evt_type = 'EXC' THEN 'Exercise'
+                  ELSE a.mkt_evt_type
+                END AS mkt_evt_name
+              FROM star_mkt_ops a
+            )
+            SELECT m.mkt_evt_name, COUNT(m.mkt_event_id) AS MEVS
+            FROM m
+            JOIN star_contract PARTITION(product_oth) c ON c.con_no = m.con_no
+            WHERE m.mod_dt > (SYSDATE - 30)
+              AND m.status <> 'PROP'
+              AND m.mkt_evt_type <> 'UNDO'
+            GROUP BY m.mkt_evt_name
+            ORDER BY MEVS DESC
+        ";
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
         {
-            EventName = reader[0]?.ToString() ?? "Unknown",
-            Contracts = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
-        });
+            var name = reader["mkt_evt_name"]?.ToString() ?? string.Empty;
+            var count = reader["MEVS"] != DBNull.Value ? Convert.ToInt32(reader["MEVS"]) : 0;
+
+            result.Add(new MarketEventStat
+            {
+                EventName = name,
+                Contracts = count
+            });
+        }
+    }
+    catch (Exception ex)
+    {
+        throw new Exception("Error fetching Market Event stats", ex);
     }
 
-    return results;
+    return result;
 }
+
 ```
 
 Also add this method to `IOracleDataService.cs`:
