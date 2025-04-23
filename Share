@@ -1,154 +1,109 @@
-Perfect! Let's proceed with implementing this new chart **modularly**. Here's what we’ll do in **3 parts**:
+using Oracle.ManagedDataAccess.Client;
+using Star.Models;
+using Star.Services;
+using Microsoft.Extensions.Configuration;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
----
-
-### ✅ 1. **Model**
-Create a file: `Models/RecBreakCause.cs`
-
-```csharp
-namespace Star.Models
+namespace Star.Services
 {
-    public class RecBreakCause
+    public class OracleDataService : IOracleDataService
     {
-        public string BreakElement { get; set; } = string.Empty;
-        public int RecBreaks { get; set; }
-        public string ProductName { get; set; } = string.Empty;
-    }
-}
-```
+        private readonly string _connectionString;
 
----
-
-### ✅ 2. **Oracle Service Logic**
-Update `OracleDataService.cs` and `IOracleDataService.cs`.
-
-#### 📄 In `IOracleDataService.cs`:
-
-```csharp
-Task<List<RecBreakCause>> GetTopRecBreakCausesAsync();
-```
-
-#### 📄 In `OracleDataService.cs`:
-
-```csharp
-public async Task<List<RecBreakCause>> GetTopRecBreakCausesAsync()
-{
-    var result = new List<RecBreakCause>();
-
-    try
-    {
-        using var conn = new OracleConnection(_connectionString);
-        await conn.OpenAsync();
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            -- your big SQL query exactly as given (no change needed)
-            WITH recbreaks AS (...) -- FULL QUERY
-            SELECT *
-            FROM recbreaks
-            WHERE  brk_element IN  (SELECT brk_element FROM recbreaksorderd WHERE rownum <= 5)
-            AND prd_typ_name IN (SELECT prd_typ_name FROM productorders WHERE rownum <= 5)
-            ORDER BY brk_element";
-
-        using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        public OracleDataService(IConfiguration configuration)
         {
-            var element = reader["BRK_ELEMENT"]?.ToString() ?? string.Empty;
-            var product = reader["PRD_TYP_NAME"]?.ToString() ?? string.Empty;
-            var breaks = reader["Rec Breaks"] != DBNull.Value ? Convert.ToInt32(reader["Rec Breaks"]) : 0;
+            _connectionString = configuration.GetConnectionString("OracleDb")
+                ?? throw new ArgumentNullException("Oracle connection string is not configured.");
+        }
 
-            result.Add(new RecBreakCause
+        public async Task<List<RecBreakCause>> GetTopRecBreakCausesAsync()
+        {
+            var result = new List<RecBreakCause>();
+
+            try
             {
-                BreakElement = element,
-                ProductName = product,
-                RecBreaks = breaks
-            });
-        }
-    }
-    catch (Exception ex)
-    {
-        throw new Exception("Error fetching top rec break causes", ex);
-    }
+                using var conn = new OracleConnection(_connectionString);
+                await conn.OpenAsync();
 
-    return result;
-}
-```
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    WITH recbreaks AS (
+                        SELECT REGEXP_REPLACE(h.brk_element, '\\[.+\\]') as BRK_ELEMENT, COUNT(1) AS \"Rec Breaks\", c.prd_typ_name
+                        FROM star_rec_hist r
+                        JOIN (
+                            SELECT a.*, CASE
+                                WHEN a.prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
+                                WHEN a.prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
+                                WHEN a.prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
+                                WHEN a.prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
+                                WHEN a.prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
+                                WHEN a.prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
+                                WHEN a.prd_typ_cod = 'FRA' THEN 'FRA'
+                                WHEN a.prd_typ_cod = 'CAP' THEN 'Cap'
+                                WHEN a.prd_typ_cod = 'FLR' THEN 'Floor'
+                                WHEN a.prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
+                                WHEN a.prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
+                                WHEN a.prd_typ_cod = 'OSP' THEN 'Swaption Pay'
+                                WHEN a.prd_typ_cod = 'OSR' THEN 'Swaption Rec'
+                                WHEN a.prd_typ_cod = 'OSS' THEN 'Swaption Strad'
+                                WHEN a.prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
+                                WHEN a.prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
+                                WHEN a.prd_typ_cod = 'CSH' THEN 'Cashflow'
+                                WHEN a.prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
+                                WHEN a.prd_typ_cod = 'BME' THEN 'Container BME'
+                                WHEN a.prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
+                                WHEN a.prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
+                                WHEN a.prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
+                                ELSE a.prd_typ_cod
+                            END AS prd_typ_name
+                            FROM star_contract PARTITION(product_oth) a
+                        ) c ON c.con_no = r.con_no
+                        JOIN star_rec_break_hist h ON r.con_no = h.con_no
+                        WHERE r.lst_mod_dt > trunc(SYSDATE) - 1460
+                          AND trunc(r.lst_mod_dt, 'DAY') < trunc(SYSDATE, 'DAY')
+                          AND r.rec_src = 'INT'
+                          AND r.rec_sts = 'DIF'
+                          AND r.rec_brk_reason NOT IN ('UNR', 'RFB')
+                        GROUP BY c.prd_typ_name, h.brk_element
+                        ORDER BY c.prd_typ_name DESC
+                    ),
+                    recbreaksorderd AS (
+                        SELECT brk_element, SUM(\"Rec Breaks\") AS Total
+                        FROM recbreaks
+                        GROUP BY brk_element
+                        ORDER BY Total DESC
+                    ),
+                    productorders AS (
+                        SELECT prd_typ_name, SUM(\"Rec Breaks\") AS Total
+                        FROM recbreaks
+                        GROUP BY prd_typ_name
+                        ORDER BY Total DESC
+                    )
+                    SELECT *
+                    FROM recbreaks
+                    WHERE brk_element IN (SELECT brk_element FROM recbreaksorderd WHERE ROWNUM <= 5)
+                      AND prd_typ_name IN (SELECT prd_typ_name FROM productorders WHERE ROWNUM <= 5)
+                    ORDER BY brk_element";
 
----
-
-### ✅ 3. **Reusable Component**
-Create component: `Shared/Charts/RecBreakCauseChart.razor`
-
-```razor
-@inject IOracleDataService DataService
-@inject IJSRuntime JSRuntime
-
-<h5 class="fw-semibold">Top 5 Rec Break Causes - Last 4 Years</h5>
-<div class="mb-3">
-    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
-    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
-</div>
-
-@if (IsLoading)
-{
-    <StarLoader Message="Fetching rec break cause data..." />
-}
-else if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <div class="alert alert-danger">@ErrorMessage</div>
-}
-
-<div id="recBreakChart" style="width: 100%; height: 400px;" class="@(IsLoading ? "d-none" : "")"></div>
-
-@code {
-    private bool IsLoading = false;
-    private string? ErrorMessage;
-
-    private async Task GenerateGraph(bool logScale)
-    {
-        IsLoading = true;
-        ErrorMessage = null;
-
-        try
-        {
-            var data = await DataService.GetTopRecBreakCausesAsync();
-
-            var labels = data.Select(d => $"{d.BreakElement} ({d.ProductName})").ToList();
-            var values = data.Select(d => (double)d.RecBreaks).ToList();
-
-            var chartData = new
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    result.Add(new RecBreakCause
+                    {
+                        BreakElement = reader["BRK_ELEMENT"].ToString() ?? string.Empty,
+                        RecBreaks = reader["Rec Breaks"] != DBNull.Value ? Convert.ToInt32(reader["Rec Breaks"]) : 0,
+                        ProductName = reader["prd_typ_name"]?.ToString() ?? string.Empty
+                    });
+                }
+            }
+            catch (Exception ex)
             {
-                labels,
-                values,
-                title = "Top 5 Rec Break Causes (5 Worst Offending Products)",
-                xLabel = "Break Element & Product",
-                yLabel = "Rec Break Count"
-            };
+                throw new Exception("Error fetching top rec break causes", ex);
+            }
 
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "recBreakChart", chartData, logScale);
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = ex.Message;
-        }
-        finally
-        {
-            IsLoading = false;
+            return result;
         }
     }
 }
-```
-
----
-
-### 📂 File Location Recap
-
-- `Models/RecBreakCause.cs`
-- `Shared/Charts/RecBreakCauseChart.razor`
-- Service logic in `OracleDataService.cs` and `IOracleDataService.cs`
-
-You can now place `<RecBreakCauseChart />` in any `.razor` page like `Trade.razor`.
-
----
-
-Let me know when you’re ready for the next graph or need me to auto-insert this into your Trade section page.
