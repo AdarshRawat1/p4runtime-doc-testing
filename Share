@@ -1,86 +1,70 @@
-Got it! We'll focus on making the **menu UI for graph selection** look cleaner and more user-friendly on pages like **Product** and **Trade**, without touching the sidebar for now.
+@page "/trade"
 
-Let’s modernize the menu with a neat design using just plain CSS (since Bootstrap is no longer being used). Here’s a suggested version with a dropdown or button group approach:
+<h3 class="text-2xl font-semibold mb-6">📊 Trade Graphs Dashboard</h3>
 
----
-
-### ✅ Step-by-step: Improved Graph Selection Menu (Plain CSS)
-
-#### 1. **Menu HTML Code** (inside your Product.razor or Trade.razor page):
-
-```razor
-<h3 class="section-title">Select Graph to Display</h3>
-
-<div class="graph-menu">
-    <button @onclick="() => SelectedGraph = 'otcProductTypes'" class="@GetButtonClass("otcProductTypes")">OTC Product Types</button>
-    <button @onclick="() => SelectedGraph = 'bnabparProductTypes'" class="@GetButtonClass("bnabparProductTypes")">BNABPAR Product Types</button>
-    <button @onclick="() => SelectedGraph = 'contractSource'" class="@GetButtonClass("contractSource")">Contracts by Source</button>
+<div class="graph-dropdown">
+    <label class="graph-label" for="graphSelector">Select a Graph:</label>
+    <select id="graphSelector" @onchange="OnGraphChange" class="graph-select">
+        <option value="">-- Choose a Graph --</option>
+        <option value="sourceSystemTradeChart">OTC contracts booked by source system in last 7 days</option>
+        <option value="marketEventChart">Market Events in Last Month</option>
+        <option value="stpTradeChart">STP Workflow Trades (Last 4 Years)</option>
+        <option value="murexErrorFix">Murex Error Fixes (Past 24 Weeks)</option>
+    </select>
 </div>
 
-@if (SelectedGraph == "otcProductTypes")
+@if (SelectedGraph == "sourceSystemTradeChart")
 {
-    <ProductTradeChart />
+    <SourceSystemTradeChart />
 }
-else if (SelectedGraph == "bnabparProductTypes")
+else if (SelectedGraph == "marketEventChart")
 {
-    <BnabparTradeChart />
+    <MarketEventChart />
 }
-else if (SelectedGraph == "contractSource")
+else if (SelectedGraph == "stpTradeChart")
 {
-    <ContractSourceChart />
+    <OtcStpTradesChart />
 }
-```
+else if (SelectedGraph == "murexErrorFix")
+{
+    <MurexErrorFixChart />
+}
 
-#### 2. **Code Section**:
+<style>
+    .graph-dropdown {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        max-width: 400px;
+        margin-bottom: 2rem;
+    }
 
-```razor
+    .graph-label {
+        font-size: 1rem;
+        color: #444;
+    }
+
+    .graph-select {
+        padding: 0.6rem 1rem;
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        font-size: 1rem;
+        background-color: #fafafa;
+        color: #333;
+        transition: border-color 0.2s;
+    }
+
+    .graph-select:focus {
+        border-color: #4a90e2;
+        outline: none;
+    }
+</style>
+
 @code {
-    private string SelectedGraph = "otcProductTypes";
+    private string? SelectedGraph;
 
-    private string GetButtonClass(string key) =>
-        key == SelectedGraph ? "graph-btn active" : "graph-btn";
+    private void OnGraphChange(ChangeEventArgs e)
+    {
+        SelectedGraph = e.Value?.ToString();
+    }
 }
-```
-
-#### 3. **CSS Styling** (add this in `wwwroot/css/site.css` or scoped CSS):
-
-```css
-.graph-menu {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-    flex-wrap: wrap;
-}
-
-.graph-btn {
-    padding: 0.5rem 1.2rem;
-    font-size: 0.95rem;
-    border: 2px solid #ddd;
-    border-radius: 6px;
-    background: #f5f5f5;
-    color: #333;
-    cursor: pointer;
-    transition: all 0.2s ease-in-out;
-}
-
-.graph-btn:hover {
-    background: #e0e0e0;
-}
-
-.graph-btn.active {
-    background: #4a90e2;
-    color: white;
-    border-color: #4a90e2;
-}
-```
-
----
-
-### ✅ Result:
-- Looks minimal, modern, and matches most UI themes.
-- Very lightweight – no external libraries.
-- Easily extendable with more graph components later.
-
----
-
-Let me know if you’d like a **dropdown menu**, **tabbed layout**, or even icons for each graph selector next!
