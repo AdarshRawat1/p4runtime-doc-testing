@@ -1,33 +1,39 @@
-Perfect! Since we’re back in rapid development mode, here’s the plan for implementing this **“Market Event in Last Month”** 2D graph:
+Perfect! Let's proceed with implementing this new chart **modularly**. Here's what we’ll do in **3 parts**:
 
 ---
 
-### ✅ Step-by-Step Implementation Plan
-
-#### 📁 1. **Model**
-Create a model file for this graph in `Star/Models/MarketEventStat.cs`:
+### ✅ 1. **Model**
+Create a file: `Models/RecBreakCause.cs`
 
 ```csharp
 namespace Star.Models
 {
-    public class MarketEventStat
+    public class RecBreakCause
     {
-        public string EventName { get; set; } = string.Empty;
-        public int Contracts { get; set; }
+        public string BreakElement { get; set; } = string.Empty;
+        public int RecBreaks { get; set; }
+        public string ProductName { get; set; } = string.Empty;
     }
 }
 ```
 
 ---
 
-#### 🛠️ 2. **OracleDataService Method**
-Add this to your `OracleDataService.cs`:
+### ✅ 2. **Oracle Service Logic**
+Update `OracleDataService.cs` and `IOracleDataService.cs`.
+
+#### 📄 In `IOracleDataService.cs`:
 
 ```csharp
+Task<List<RecBreakCause>> GetTopRecBreakCausesAsync();
+```
 
-public async Task<List<MarketEventStat>> GetMarketEventStatsAsync()
+#### 📄 In `OracleDataService.cs`:
+
+```csharp
+public async Task<List<RecBreakCause>> GetTopRecBreakCausesAsync()
 {
-    var result = new List<MarketEventStat>();
+    var result = new List<RecBreakCause>();
 
     try
     {
@@ -36,92 +42,48 @@ public async Task<List<MarketEventStat>> GetMarketEventStatsAsync()
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            WITH clearing AS (
-              SELECT m.con_no, c.clr_org
-              FROM star_mkt_ops m
-              JOIN star_clearing c ON c.con_no = m.con_no
-              WHERE m.mkt_evt_type = 'RPTY'
-                AND m.mev_sub_type = 'UNS'
-                AND m.mod_dt > (SYSDATE - 30)
-                AND m.status <> 'PROP'
-                AND m.mkt_evt_type <> 'UNDO'
-            ),
-            m AS (
-              SELECT a.*,
-                CASE
-                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'PNV' THEN 'Partial Remaining Party'
-                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS'
-                       AND EXISTS (SELECT 1 FROM clearing WHERE clr_org = 16582 AND con_no = a.con_no) THEN 'LCH. Clearnet LTD'
-                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS'
-                       AND EXISTS (SELECT 1 FROM clearing WHERE clr_org = 226198 AND con_no = a.con_no) THEN 'Japan Securities Clearing Corp'
-                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS'
-                       AND EXISTS (SELECT 1 FROM clearing WHERE clr_org = 7048 AND con_no = a.con_no) THEN 'Chicago Mercantile Exchange'
-                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS'
-                       AND EXISTS (SELECT 1 FROM clearing WHERE clr_org = 653 AND con_no = a.con_no) THEN 'Banco Central Do Brasil'
-                  WHEN a.mkt_evt_type = 'RPTY' AND a.mev_sub_type = 'UNS' THEN 'Remaining Party'
-                  WHEN a.mkt_evt_type = 'UWIN' THEN 'Unwind'
-                  WHEN a.mkt_evt_type = 'STIN' THEN 'Step In'
-                  WHEN a.mkt_evt_type = 'SOUT' THEN 'Step Out'
-                  WHEN a.mkt_evt_type = 'REST' THEN 'Restructure'
-                  WHEN a.mkt_evt_type = 'PTFR' THEN 'Portfolio Reassignment'
-                  WHEN a.mkt_evt_type = 'EXP' THEN 'Expiry'
-                  WHEN a.mkt_evt_type = 'EP' THEN 'Physical exercise'
-                  WHEN a.mkt_evt_type = 'EC' THEN 'Cash exercise'
-                  WHEN a.mkt_evt_type = 'DEL' THEN 'Delete'
-                  WHEN a.mkt_evt_type = 'EXC' THEN 'Exercise'
-                  ELSE a.mkt_evt_type
-                END AS mkt_evt_name
-              FROM star_mkt_ops a
-            )
-            SELECT m.mkt_evt_name, COUNT(m.mkt_event_id) AS MEVS
-            FROM m
-            JOIN star_contract PARTITION(product_oth) c ON c.con_no = m.con_no
-            WHERE m.mod_dt > (SYSDATE - 30)
-              AND m.status <> 'PROP'
-              AND m.mkt_evt_type <> 'UNDO'
-            GROUP BY m.mkt_evt_name
-            ORDER BY MEVS DESC
-        ";
+            -- your big SQL query exactly as given (no change needed)
+            WITH recbreaks AS (...) -- FULL QUERY
+            SELECT *
+            FROM recbreaks
+            WHERE  brk_element IN  (SELECT brk_element FROM recbreaksorderd WHERE rownum <= 5)
+            AND prd_typ_name IN (SELECT prd_typ_name FROM productorders WHERE rownum <= 5)
+            ORDER BY brk_element";
 
         using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            var name = reader["mkt_evt_name"]?.ToString() ?? string.Empty;
-            var count = reader["MEVS"] != DBNull.Value ? Convert.ToInt32(reader["MEVS"]) : 0;
+            var element = reader["BRK_ELEMENT"]?.ToString() ?? string.Empty;
+            var product = reader["PRD_TYP_NAME"]?.ToString() ?? string.Empty;
+            var breaks = reader["Rec Breaks"] != DBNull.Value ? Convert.ToInt32(reader["Rec Breaks"]) : 0;
 
-            result.Add(new MarketEventStat
+            result.Add(new RecBreakCause
             {
-                EventName = name,
-                Contracts = count
+                BreakElement = element,
+                ProductName = product,
+                RecBreaks = breaks
             });
         }
     }
     catch (Exception ex)
     {
-        throw new Exception("Error fetching Market Event stats", ex);
+        throw new Exception("Error fetching top rec break causes", ex);
     }
 
     return result;
 }
-
-```
-
-Also add this method to `IOracleDataService.cs`:
-
-```csharp
-Task<List<MarketEventStat>> GetMarketEventStatsAsync();
 ```
 
 ---
 
-#### 📊 3. **Create Component: `Shared/Charts/MarketEventChart.razor`**
+### ✅ 3. **Reusable Component**
+Create component: `Shared/Charts/RecBreakCauseChart.razor`
 
 ```razor
-@using Star.Models
 @inject IOracleDataService DataService
 @inject IJSRuntime JSRuntime
 
-<h5 class="fw-semibold">Market Events in Last Month</h5>
+<h5 class="fw-semibold">Top 5 Rec Break Causes - Last 4 Years</h5>
 <div class="mb-3">
     <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
     <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
@@ -129,14 +91,14 @@ Task<List<MarketEventStat>> GetMarketEventStatsAsync();
 
 @if (IsLoading)
 {
-    <StarLoader Message="Fetching market event statistics..." />
+    <StarLoader Message="Fetching rec break cause data..." />
 }
 else if (!string.IsNullOrEmpty(ErrorMessage))
 {
     <div class="alert alert-danger">@ErrorMessage</div>
 }
 
-<div id="marketEventChart" style="width: 100%; height: 400px;" class="@(IsLoading ? "d-none" : "")"></div>
+<div id="recBreakChart" style="width: 100%; height: 400px;" class="@(IsLoading ? "d-none" : "")"></div>
 
 @code {
     private bool IsLoading = false;
@@ -149,20 +111,21 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
 
         try
         {
-            var data = await DataService.GetMarketEventStatsAsync();
-            var labels = data.Select(d => d.EventName).ToList();
-            var values = data.Select(d => (double)d.Contracts).ToList();
+            var data = await DataService.GetTopRecBreakCausesAsync();
+
+            var labels = data.Select(d => $"{d.BreakElement} ({d.ProductName})").ToList();
+            var values = data.Select(d => (double)d.RecBreaks).ToList();
 
             var chartData = new
             {
                 labels,
                 values,
-                title = "Market Events in Last Month",
-                xLabel = "Event",
-                yLabel = "Contracts"
+                title = "Top 5 Rec Break Causes (5 Worst Offending Products)",
+                xLabel = "Break Element & Product",
+                yLabel = "Rec Break Count"
             };
 
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "marketEventChart", chartData, logScale);
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "recBreakChart", chartData, logScale);
         }
         catch (Exception ex)
         {
@@ -178,21 +141,14 @@ else if (!string.IsNullOrEmpty(ErrorMessage))
 
 ---
 
-#### 🧩 4. **Use It in Trade Page**
+### 📂 File Location Recap
 
-Go to your Trade section page (`Pages/Trade.razor`) and include:
+- `Models/RecBreakCause.cs`
+- `Shared/Charts/RecBreakCauseChart.razor`
+- Service logic in `OracleDataService.cs` and `IOracleDataService.cs`
 
-```razor
-<MarketEventChart />
-```
-
-Make sure `@using Star.Shared.Charts` is added in `_Imports.razor`.
+You can now place `<RecBreakCauseChart />` in any `.razor` page like `Trade.razor`.
 
 ---
 
-### 🎨 Optional:
-If the y-axis values vary greatly, log scale will help. If not, it still gives a better UX with the toggle buttons.
-
----
-
-Once you confirm this is working, we’ll repeat the same modular pattern for the next query! Ready to move?
+Let me know when you’re ready for the next graph or need me to auto-insert this into your Trade section page.
