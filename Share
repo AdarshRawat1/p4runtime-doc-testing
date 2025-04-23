@@ -1,109 +1,134 @@
-using Oracle.ManagedDataAccess.Client;
-using Star.Models;
-using Star.Services;
-using Microsoft.Extensions.Configuration;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
+Perfect! We'll implement the **"OTC contracts booked by source system in last 7 days excluding synthetics"** chart using the same modular approach we've been using. Here's how we’ll proceed:
 
-namespace Star.Services
+---
+
+### ✅ Step-by-Step Plan
+
+#### 🔹 1. Model (`Models/SourceSystemTrade.cs`)
+```csharp
+namespace Star.Models
 {
-    public class OracleDataService : IOracleDataService
+    public class SourceSystemTrade
     {
-        private readonly string _connectionString;
+        public string SourceSystem { get; set; } = string.Empty;
+        public int DealsBooked { get; set; }
+    }
+}
+```
 
-        public OracleDataService(IConfiguration configuration)
+---
+
+#### 🔹 2. Oracle Service Method (`Services/OracleDataService.cs`)
+```csharp
+public async Task<List<SourceSystemTrade>> GetSourceSystemTradesAsync()
+{
+    var result = new List<SourceSystemTrade>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT CASE
+                 WHEN s.dsc IS NULL THEN 'Star'
+                 ELSE s.dsc
+               END AS source_system,
+               COUNT(1) AS deals_booked
+        FROM (SELECT c.mrr_typ_cod, c.inp_dt, c.src_sys_cod
+              FROM star_contract PARTITION(product_oth) c) t
+        LEFT JOIN star_src_sys s ON t.src_sys_cod = s.src_sys_cod
+        WHERE t.inp_dt > trunc(SYSDATE) - 7
+          AND t.mrr_typ_cod IN (0, 1, 6)
+        GROUP BY s.dsc
+        ORDER BY deals_booked DESC";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new SourceSystemTrade
         {
-            _connectionString = configuration.GetConnectionString("OracleDb")
-                ?? throw new ArgumentNullException("Oracle connection string is not configured.");
+            SourceSystem = reader["source_system"]?.ToString() ?? "Unknown",
+            DealsBooked = reader["deals_booked"] != DBNull.Value ? Convert.ToInt32(reader["deals_booked"]) : 0
+        });
+    }
+
+    return result;
+}
+```
+
+---
+
+#### 🔹 3. Interface (`Services/IOracleDataService.cs`)
+```csharp
+Task<List<SourceSystemTrade>> GetSourceSystemTradesAsync();
+```
+
+---
+
+#### 🔹 4. Razor Component (`Shared/Charts/SourceSystemTradeChart.razor`)
+```razor
+@inject IOracleDataService DataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">OTC Contracts by Source System (Last 7 Days)</h5>
+
+<div class="mb-3">
+    <button class="btn btn-primary" @onclick="() => GenerateGraph(false)">Show Normal</button>
+    <button class="btn btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
+</div>
+
+@if (IsLoading)
+{
+    <StarLoader Message="Fetching source system contract data..." />
+}
+@if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<div id="sourceSystemChart" style="width: 100%; height: 500px;" class="@(IsLoading ? "d-none" : "")"></div>
+
+@code {
+    private bool IsLoading;
+    private string? ErrorMessage;
+
+    private async Task GenerateGraph(bool logScale)
+    {
+        try
+        {
+            IsLoading = true;
+            ErrorMessage = null;
+
+            var data = await DataService.GetSourceSystemTradesAsync();
+
+            var chartData = new
+            {
+                labels = data.Select(x => x.SourceSystem).ToList(),
+                values = data.Select(x => (double)x.DealsBooked).ToList(),
+                title = "OTC Contracts by Source System (Last 7 Days)",
+                xLabel = "Source System",
+                yLabel = "Contracts"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "sourceSystemChart", chartData, logScale);
         }
-
-        public async Task<List<RecBreakCause>> GetTopRecBreakCausesAsync()
+        catch (Exception ex)
         {
-            var result = new List<RecBreakCause>();
-
-            try
-            {
-                using var conn = new OracleConnection(_connectionString);
-                await conn.OpenAsync();
-
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
-                    WITH recbreaks AS (
-                        SELECT REGEXP_REPLACE(h.brk_element, '\\[.+\\]') as BRK_ELEMENT, COUNT(1) AS \"Rec Breaks\", c.prd_typ_name
-                        FROM star_rec_hist r
-                        JOIN (
-                            SELECT a.*, CASE
-                                WHEN a.prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
-                                WHEN a.prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
-                                WHEN a.prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
-                                WHEN a.prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
-                                WHEN a.prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
-                                WHEN a.prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
-                                WHEN a.prd_typ_cod = 'FRA' THEN 'FRA'
-                                WHEN a.prd_typ_cod = 'CAP' THEN 'Cap'
-                                WHEN a.prd_typ_cod = 'FLR' THEN 'Floor'
-                                WHEN a.prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
-                                WHEN a.prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
-                                WHEN a.prd_typ_cod = 'OSP' THEN 'Swaption Pay'
-                                WHEN a.prd_typ_cod = 'OSR' THEN 'Swaption Rec'
-                                WHEN a.prd_typ_cod = 'OSS' THEN 'Swaption Strad'
-                                WHEN a.prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
-                                WHEN a.prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
-                                WHEN a.prd_typ_cod = 'CSH' THEN 'Cashflow'
-                                WHEN a.prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
-                                WHEN a.prd_typ_cod = 'BME' THEN 'Container BME'
-                                WHEN a.prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
-                                WHEN a.prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
-                                WHEN a.prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
-                                ELSE a.prd_typ_cod
-                            END AS prd_typ_name
-                            FROM star_contract PARTITION(product_oth) a
-                        ) c ON c.con_no = r.con_no
-                        JOIN star_rec_break_hist h ON r.con_no = h.con_no
-                        WHERE r.lst_mod_dt > trunc(SYSDATE) - 1460
-                          AND trunc(r.lst_mod_dt, 'DAY') < trunc(SYSDATE, 'DAY')
-                          AND r.rec_src = 'INT'
-                          AND r.rec_sts = 'DIF'
-                          AND r.rec_brk_reason NOT IN ('UNR', 'RFB')
-                        GROUP BY c.prd_typ_name, h.brk_element
-                        ORDER BY c.prd_typ_name DESC
-                    ),
-                    recbreaksorderd AS (
-                        SELECT brk_element, SUM(\"Rec Breaks\") AS Total
-                        FROM recbreaks
-                        GROUP BY brk_element
-                        ORDER BY Total DESC
-                    ),
-                    productorders AS (
-                        SELECT prd_typ_name, SUM(\"Rec Breaks\") AS Total
-                        FROM recbreaks
-                        GROUP BY prd_typ_name
-                        ORDER BY Total DESC
-                    )
-                    SELECT *
-                    FROM recbreaks
-                    WHERE brk_element IN (SELECT brk_element FROM recbreaksorderd WHERE ROWNUM <= 5)
-                      AND prd_typ_name IN (SELECT prd_typ_name FROM productorders WHERE ROWNUM <= 5)
-                    ORDER BY brk_element";
-
-                using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    result.Add(new RecBreakCause
-                    {
-                        BreakElement = reader["BRK_ELEMENT"].ToString() ?? string.Empty,
-                        RecBreaks = reader["Rec Breaks"] != DBNull.Value ? Convert.ToInt32(reader["Rec Breaks"]) : 0,
-                        ProductName = reader["prd_typ_name"]?.ToString() ?? string.Empty
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                throw new Exception("Error fetching top rec break causes", ex);
-            }
-
-            return result;
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
         }
     }
 }
+```
+
+---
+
+Now you can plug this into the **Trade** section sidebar with a menu item like:
+
+```html
+<NavLink href="/trade/source-systems" Match="NavLinkMatch.All">Source System Trades</NavLink>
+```
+
+Let me know if you'd like the route page to be created too (`Pages/Trade/SourceSystemTrades.razor`) — or if we move to the next chart right away.
