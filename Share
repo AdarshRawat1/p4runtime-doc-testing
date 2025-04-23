@@ -1,182 +1,86 @@
-Below is everything you need to plug the **“Error corrections on contracts which have been passed to Murex (last 24 weeks)”** line-chart into your existing modular setup.
+Got it! We'll focus on making the **menu UI for graph selection** look cleaner and more user-friendly on pages like **Product** and **Trade**, without touching the sidebar for now.
+
+Let’s modernize the menu with a neat design using just plain CSS (since Bootstrap is no longer being used). Here’s a suggested version with a dropdown or button group approach:
 
 ---
 
-## 1 ▸ Model  
-`Models/MurexErrorFix.cs`
+### ✅ Step-by-step: Improved Graph Selection Menu (Plain CSS)
 
-```csharp
-namespace Star.Models
-{
-    public class MurexErrorFix
-    {
-        public string Week { get; set; } = string.Empty;   // yyyy-MM-dd
-        public int Deals  { get; set; }
-    }
-}
-```
-
----
-
-## 2 ▸ Oracle-data method  
-
-### Interface  
-`IOracleDataService.cs`
-
-```csharp
-Task<List<MurexErrorFix>> GetMurexErrorFixesAsync();
-```
-
-### Implementation  
-add to **OracleDataService.cs**
-
-```csharp
-public async Task<List<MurexErrorFix>> GetMurexErrorFixesAsync()
-{
-    var list = new List<MurexErrorFix>();
-
-    using var conn = new OracleConnection(_connectionString);
-    await conn.OpenAsync();
-
-    using var cmd = conn.CreateCommand();
-    cmd.CommandText = @"
-        SELECT TO_CHAR(TRUNC(wf.lst_mod_dt,'DAY'),'YYYY-MM-DD') AS week_key,
-               COUNT(wf.con_no) AS deals
-        FROM   star_workflow_hist wf
-        WHERE  wf.ext_sys_cod = 'MRX'
-          AND  wf.mo_evt_flg  = 'ERR'
-          AND  wf.mo_sts_cod  = 'DIP'
-          AND  wf.ops_sts_cod = 'REC'
-          AND  TRUNC(wf.lst_mod_dt,'DAY') < TRUNC(SYSDATE,'DAY')
-          AND  wf.lst_mod_dt  >  TRUNC(SYSDATE) - 7*24     -- 24 weeks (~6 months)
-          AND  wf.con_no IN (SELECT con_no
-                             FROM star_contract PARTITION(product_oth))
-        GROUP  BY TRUNC(wf.lst_mod_dt,'DAY')
-        ORDER  BY TRUNC(wf.lst_mod_dt,'DAY')";
-    
-    using var rdr = await cmd.ExecuteReaderAsync();
-    while (await rdr.ReadAsync())
-    {
-        list.Add(new MurexErrorFix
-        {
-            Week  = rdr["week_key"]?.ToString() ?? "",
-            Deals = rdr["deals"] != DBNull.Value
-                      ? Convert.ToInt32(rdr["deals"]) : 0
-        });
-    }
-    return list;
-}
-```
-
-*No spaces / quotes in column aliases ⇒ avoids the `": expected"` headaches.*
-
----
-
-## 3 ▸ Reusable chart component  
-`Shared/Charts/MurexErrorFixChart.razor`
+#### 1. **Menu HTML Code** (inside your Product.razor or Trade.razor page):
 
 ```razor
-@inject IOracleDataService DataService
-@inject IJSRuntime         JSRuntime
+<h3 class="section-title">Select Graph to Display</h3>
 
-<h5 class="fw-semibold">Murex Error-Corrections Per Week (last ~6 months)</h5>
-
-<div class="mb-3">
-    <button class="btn btn-primary me-2"  @onclick="() => Render(false)">Show Normal</button>
-    <button class="btn btn-secondary"     @onclick="() => Render(true)">Show Zoomed</button>
+<div class="graph-menu">
+    <button @onclick="() => SelectedGraph = 'otcProductTypes'" class="@GetButtonClass("otcProductTypes")">OTC Product Types</button>
+    <button @onclick="() => SelectedGraph = 'bnabparProductTypes'" class="@GetButtonClass("bnabparProductTypes")">BNABPAR Product Types</button>
+    <button @onclick="() => SelectedGraph = 'contractSource'" class="@GetButtonClass("contractSource")">Contracts by Source</button>
 </div>
 
-@if (IsLoading)
+@if (SelectedGraph == "otcProductTypes")
 {
-    <StarLoader Message="Fetching Murex error-fix data…" />
+    <ProductTradeChart />
 }
-else if (!string.IsNullOrEmpty(ErrorMessage))
+else if (SelectedGraph == "bnabparProductTypes")
 {
-    <div class="alert alert-danger">@ErrorMessage</div>
+    <BnabparTradeChart />
 }
-
-<div id="murexFixChart"
-     style="width:100%;height:450px;"
-     class="@(IsLoading ? "d-none" : "")"></div>
-
-@code {
-    private bool   IsLoading;
-    private string? ErrorMessage;
-
-    private async Task Render(bool logScale)
-    {
-        try
-        {
-            IsLoading  = true;  ErrorMessage = null;
-            var data   = await DataService.GetMurexErrorFixesAsync();
-
-            var chartData = new
-            {
-                labels = data.Select(d => d.Week).ToList(),
-                values = data.Select(d => (double)d.Deals).ToList(),
-                title  = "Error corrections on contracts passed to Murex",
-                xLabel = "Week",
-                yLabel = "Deals"
-            };
-
-            await JSRuntime.InvokeVoidAsync(
-                "renderPlotlyLineChart",         // reuse the same JS helper—see below
-                "murexFixChart",
-                chartData,
-                logScale);
-        }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
-        finally { IsLoading = false; }
-    }
+else if (SelectedGraph == "contractSource")
+{
+    <ContractSourceChart />
 }
 ```
 
----
-
-## 4 ▸ Small JS helper (if you don’t have one yet)
-
-In `wwwroot/js/plotlyInterop.js` add:
-
-```js
-window.renderPlotlyLineChart = (divId, d, logScale) => {
-    Plotly.newPlot(divId,
-      [{
-        x: d.labels,
-        y: d.values,
-        type: 'scatter',
-        mode: 'lines+markers',
-        line: { shape: 'spline' }
-      }],
-      {
-        title:  d.title,
-        xaxis: { title: d.xLabel, automargin: true },
-        yaxis: { title: d.yLabel, type: logScale ? 'log' : 'linear', automargin: true },
-        margin: { l: 60, r: 30, t: 50, b: 80 }
-      },
-      { responsive: true });
-};
-```
-
-*(If you already have a generic `renderPlotlyBarChart`, keep both helpers.)*
-
----
-
-## 5 ▸ Display on a page  
-
-For example, in `Pages/Trade/Errors.razor`:
+#### 2. **Code Section**:
 
 ```razor
-@page "/trade/murex-errors"
-@using Star.Shared.Charts
+@code {
+    private string SelectedGraph = "otcProductTypes";
 
-<MurexErrorFixChart />
+    private string GetButtonClass(string key) =>
+        key == SelectedGraph ? "graph-btn active" : "graph-btn";
+}
 ```
 
-Add a sidebar link to `/trade/murex-errors`.
+#### 3. **CSS Styling** (add this in `wwwroot/css/site.css` or scoped CSS):
+
+```css
+.graph-menu {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.graph-btn {
+    padding: 0.5rem 1.2rem;
+    font-size: 0.95rem;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    background: #f5f5f5;
+    color: #333;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+}
+
+.graph-btn:hover {
+    background: #e0e0e0;
+}
+
+.graph-btn.active {
+    background: #4a90e2;
+    color: white;
+    border-color: #4a90e2;
+}
+```
 
 ---
 
-### You’re done!  
-This keeps the same **loader, JS helper, and modular folder pattern** you’re already using. Render is 2-D, quick, and fully reusable.
+### ✅ Result:
+- Looks minimal, modern, and matches most UI themes.
+- Very lightweight – no external libraries.
+- Easily extendable with more graph components later.
 
-Give it a spin, and ping me when you’re ready for the next chart.
+---
+
+Let me know if you’d like a **dropdown menu**, **tabbed layout**, or even icons for each graph selector next!
