@@ -1,4 +1,140 @@
-  foreach (var item in data)
+Perfect! Since we’re back in rapid development mode, here’s the plan for implementing this **“Market Event in Last Month”** 2D graph:
+
+---
+
+### ✅ Step-by-Step Implementation Plan
+
+#### 📁 1. **Model**
+Create a model file for this graph in `Star/Models/MarketEventStat.cs`:
+
+```csharp
+namespace Star.Models
+{
+    public class MarketEventStat
+    {
+        public string EventName { get; set; } = string.Empty;
+        public int Contracts { get; set; }
+    }
+}
+```
+
+---
+
+#### 🛠️ 2. **OracleDataService Method**
+Add this to your `OracleDataService.cs`:
+
+```csharp
+public async Task<List<MarketEventStat>> GetMarketEventStatsAsync()
+{
+    var results = new List<MarketEventStat>();
+
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"-- your entire SQL query pasted here exactly as sent --";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        results.Add(new MarketEventStat
+        {
+            EventName = reader[0]?.ToString() ?? "Unknown",
+            Contracts = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
+        });
+    }
+
+    return results;
+}
+```
+
+Also add this method to `IOracleDataService.cs`:
+
+```csharp
+Task<List<MarketEventStat>> GetMarketEventStatsAsync();
+```
+
+---
+
+#### 📊 3. **Create Component: `Shared/Charts/MarketEventChart.razor`**
+
+```razor
+@using Star.Models
+@inject IOracleDataService DataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">Market Events in Last Month</h5>
+<div class="mb-3">
+    <button class="btn btn-sm btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
+    <button class="btn btn-sm btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
+</div>
+
+@if (IsLoading)
+{
+    <StarLoader Message="Fetching market event statistics..." />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<div id="marketEventChart" style="width: 100%; height: 400px;" class="@(IsLoading ? "d-none" : "")"></div>
+
+@code {
+    private bool IsLoading = false;
+    private string? ErrorMessage;
+
+    private async Task GenerateGraph(bool logScale)
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var data = await DataService.GetMarketEventStatsAsync();
+            var labels = data.Select(d => d.EventName).ToList();
+            var values = data.Select(d => (double)d.Contracts).ToList();
+
+            var chartData = new
             {
-                Console.WriteLine($"📦 Product: {item.ProductName}, 📍 Location: {item.Location}, 🔢 Count: {item.TotalTrades}");
-            }
+                labels,
+                values,
+                title = "Market Events in Last Month",
+                xLabel = "Event",
+                yLabel = "Contracts"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "marketEventChart", chartData, logScale);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
+```
+
+---
+
+#### 🧩 4. **Use It in Trade Page**
+
+Go to your Trade section page (`Pages/Trade.razor`) and include:
+
+```razor
+<MarketEventChart />
+```
+
+Make sure `@using Star.Shared.Charts` is added in `_Imports.razor`.
+
+---
+
+### 🎨 Optional:
+If the y-axis values vary greatly, log scale will help. If not, it still gives a better UX with the toggle buttons.
+
+---
+
+Once you confirm this is working, we’ll repeat the same modular pattern for the next query! Ready to move?
