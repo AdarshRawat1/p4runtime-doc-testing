@@ -1,51 +1,47 @@
 public async Task<List<StpTradeData>> GetOtcStpWorkflowTradesAsync()
-        {
-            var result = new List<StpTradeData>();
-            using var conn = new OracleConnection(_connectionString);
-            await conn.OpenAsync();
+{
+    var result = new List<StpTradeData>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
 
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = @"
-                WITH otc_workflow_hist AS (
-                    SELECT *
-                    FROM   star_workflow_hist
-                    WHERE  con_no IN (SELECT con_no FROM star_contract PARTITION(product_oth))
-                ),
-                manu AS (
-                    SELECT con_no FROM otc_workflow_hist WHERE ops_sts_cod = 'NOT'
-                ),
-                stp AS (
-                    SELECT DISTINCT con_no FROM otc_workflow_hist
-                    MINUS
-                    SELECT con_no FROM manu
-                )
-                SELECT TRUNC(w.lst_mod_dt, 'DAY') AS Week,
-                       COUNT(1) AS "STP Deals"
-                FROM (
-                    SELECT h.con_no, h.lst_mod_dt
-                    FROM   otc_workflow_hist h
-                    WHERE  (h.con_no, h.lst_mod_dt) IN (
-                        SELECT con_no, MIN(lst_mod_dt)
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        WITH otc_workflow_hist AS (
+            SELECT *
+            FROM   star_workflow_hist
+            WHERE  con_no IN
+                   (SELECT con_no FROM star_contract PARTITION(product_oth)))
+        ,manu AS (
+            SELECT con_no FROM otc_workflow_hist WHERE ops_sts_cod = 'NOT')
+        ,stp AS (
+            SELECT DISTINCT con_no
+            FROM   otc_workflow_hist
+            MINUS
+            SELECT con_no FROM manu)
+        SELECT TRUNC(w.lst_mod_dt, 'DAY') ""Week"",
+               COUNT(1) ""STP Deals""
+        FROM   (SELECT h.con_no, h.lst_mod_dt
+                FROM   otc_workflow_hist h
+                WHERE  (h.con_no, h.lst_mod_dt) IN
+                       (SELECT con_no, MIN(lst_mod_dt)
                         FROM   otc_workflow_hist
                         WHERE  con_no IN (SELECT con_no FROM stp)
-                        GROUP  BY con_no
-                    )
-                ) w
-                WHERE TRUNC(w.lst_mod_dt, 'DAY') < TRUNC(SYSDATE, 'DAY')
-                  AND TRUNC(w.lst_mod_dt, 'DAY') > TRUNC(SYSDATE) - 364 * 4
-                GROUP BY TRUNC(w.lst_mod_dt, 'DAY')
-                ORDER BY Week ASC
-            ";
+                        GROUP  BY con_no)) w
+        WHERE  TRUNC(w.lst_mod_dt, 'DAY') < TRUNC(SYSDATE, 'DAY')
+               AND TRUNC(w.lst_mod_dt, 'DAY') > TRUNC(SYSDATE) - 364 * 4
+        GROUP  BY TRUNC(w.lst_mod_dt, 'DAY')
+        ORDER  BY ""Week"" ASC
+    ";
 
-            using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                result.Add(new StpTradeData
-                {
-                    Week = reader[0]?.ToString() ?? "",
-                    StpDeals = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
-                });
-            }
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new StpTradeData
+        {
+            Week = reader[0]?.ToString() ?? "",
+            StpDeals = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
+        });
+    }
 
-            return result;
-        }
+    return result;
+}
