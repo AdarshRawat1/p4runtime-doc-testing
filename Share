@@ -1,123 +1,51 @@
-// Razor Component: Shared/Charts/OtcStpTradesChart.razor
-@inject IOracleDataService DataService
-@inject IJSRuntime JSRuntime
-
-<h5 class="fw-semibold">OTC STP Workflow Trades Per Week</h5>
-<div class="mb-3">
-    <button class="btn btn-primary me-2" @onclick="() => GenerateGraph(false)">Show Normal</button>
-    <button class="btn btn-secondary" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
-</div>
-
-@if (IsLoading)
-{
-    <StarLoader Message="Fetching STP workflow data..." />
-}
-@if (!string.IsNullOrEmpty(ErrorMessage))
-{
-    <div class="alert alert-danger">@ErrorMessage</div>
-}
-
-<div id="stpTradesChart" style="width: 100%; height: 500px;" class="@(IsLoading ? "d-none" : "")"></div>
-
-@code {
-    private bool IsLoading;
-    private string? ErrorMessage;
-
-    private async Task GenerateGraph(bool logScale)
-    {
-        try
-        {
-            IsLoading = true;
-            ErrorMessage = null;
-
-            var data = await DataService.GetOtcStpWorkflowTradesAsync();
-
-            var chartData = new
-            {
-                labels = data.Select(x => x.Week).ToList(),
-                values = data.Select(x => (double)x.StpDeals).ToList(),
-                title = "OTC STP Workflow Trades Per Week",
-                xLabel = "Week",
-                yLabel = "STP Trades"
-            };
-
-            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "stpTradesChart", chartData, logScale);
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = ex.Message;
-        }
-        finally
-        {
-            IsLoading = false;
-        }
-    }
-}
-
-
-
-
-
-
-
-
-Great! I've set up the modular component for the **OTC STP Workflow Trades Per Week** graph. Here's what you need to do next:
-
----
-
-### ✅ FILE LOCATIONS
-- Place the above Razor file in: `Shared/Charts/OtcStpTradesChart.razor`
-- Ensure your **OracleDataService** includes the query method:
-```csharp
-public class StpTradeData {
-    public string Week { get; set; } = "";
-    public int StpDeals { get; set; }
-}
-```
-And the query logic in `OracleDataService.cs`:
-```csharp
 public async Task<List<StpTradeData>> GetOtcStpWorkflowTradesAsync()
-{
-    var result = new List<StpTradeData>();
-    using var conn = new OracleConnection(_connectionString);
-    await conn.OpenAsync();
-
-    using var cmd = conn.CreateCommand();
-    cmd.CommandText = @"-- Place full SQL from your previous message here";
-    
-    using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync())
-    {
-        result.Add(new StpTradeData
         {
-            Week = reader[0]?.ToString() ?? "",
-            StpDeals = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
-        });
-    }
+            var result = new List<StpTradeData>();
+            using var conn = new OracleConnection(_connectionString);
+            await conn.OpenAsync();
 
-    return result;
-}
-```
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                WITH otc_workflow_hist AS (
+                    SELECT *
+                    FROM   star_workflow_hist
+                    WHERE  con_no IN (SELECT con_no FROM star_contract PARTITION(product_oth))
+                ),
+                manu AS (
+                    SELECT con_no FROM otc_workflow_hist WHERE ops_sts_cod = 'NOT'
+                ),
+                stp AS (
+                    SELECT DISTINCT con_no FROM otc_workflow_hist
+                    MINUS
+                    SELECT con_no FROM manu
+                )
+                SELECT TRUNC(w.lst_mod_dt, 'DAY') AS Week,
+                       COUNT(1) AS "STP Deals"
+                FROM (
+                    SELECT h.con_no, h.lst_mod_dt
+                    FROM   otc_workflow_hist h
+                    WHERE  (h.con_no, h.lst_mod_dt) IN (
+                        SELECT con_no, MIN(lst_mod_dt)
+                        FROM   otc_workflow_hist
+                        WHERE  con_no IN (SELECT con_no FROM stp)
+                        GROUP  BY con_no
+                    )
+                ) w
+                WHERE TRUNC(w.lst_mod_dt, 'DAY') < TRUNC(SYSDATE, 'DAY')
+                  AND TRUNC(w.lst_mod_dt, 'DAY') > TRUNC(SYSDATE) - 364 * 4
+                GROUP BY TRUNC(w.lst_mod_dt, 'DAY')
+                ORDER BY Week ASC
+            ";
 
----
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                result.Add(new StpTradeData
+                {
+                    Week = reader[0]?.ToString() ?? "",
+                    StpDeals = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
+                });
+            }
 
-### 🔗 USAGE
-To render this chart on a page (e.g. `Pages/Trade/StpTrades.razor`), just do:
-```razor
-@page "/trade/stp-trades"
-@using Star.Models
-@inject IOracleDataService DataService
-
-<OtcStpTradesChart />
-```
-
----
-
-Shall I go ahead and prepare the `.cs` update for the service and model too?
-
-
-
-
-
-
-
+            return result;
+        }
