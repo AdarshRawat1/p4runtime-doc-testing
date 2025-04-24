@@ -1,70 +1,1261 @@
-@page "/trade"
+// ✅ 1. Model: Models/MurexDeletionData.cs
+namespace Star.Models
+{
+    public class MurexDeletionData
+    {
+        public string Week { get; set; } = string.Empty;
+        public int Deals { get; set; }
+    }
+}
 
-<h3 class="text-2xl font-semibold mb-6">📊 Trade Graphs Dashboard</h3>
 
-<div class="graph-dropdown">
-    <label class="graph-label" for="graphSelector">Select a Graph:</label>
-    <select id="graphSelector" @onchange="OnGraphChange" class="graph-select">
-        <option value="">-- Choose a Graph --</option>
-        <option value="sourceSystemTradeChart">OTC contracts booked by source system in last 7 days</option>
-        <option value="marketEventChart">Market Events in Last Month</option>
-        <option value="stpTradeChart">STP Workflow Trades (Last 4 Years)</option>
-        <option value="murexErrorFix">Murex Error Fixes (Past 24 Weeks)</option>
-    </select>
+// ✅ 2. Service Method: OracleDataService.cs
+public async Task<List<MurexDeletionData>> GetMurexDeletionDataAsync()
+{
+    var result = new List<MurexDeletionData>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT TO_CHAR(trunc(wf.lst_mod_dt, 'DAY'), 'YYYY-MM-DD'),
+               COUNT(con_no) AS Deals
+        FROM   star_workflow_hist wf
+        WHERE  wf.ext_sys_cod = 'MRX'
+               AND wf.mo_evt_flg IN ('DEL','HDE')
+               AND wf.mo_sts_cod = 'DIP'
+               AND wf.ops_sts_cod = 'REC'
+               AND trunc(wf.lst_mod_dt, 'DAY') < trunc(SYSDATE, 'DAY')
+               AND wf.lst_mod_dt > trunc(SYSDATE) - 7*24
+               AND wf.con_no IN (
+                   SELECT con_no FROM star_contract PARTITION(product_oth))
+        GROUP BY trunc(wf.lst_mod_dt, 'DAY')
+        ORDER BY trunc(wf.lst_mod_dt, 'DAY')
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new MurexDeletionData
+        {
+            Week = reader[0]?.ToString() ?? string.Empty,
+            Deals = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
+        });
+    }
+    return result;
+}
+
+
+// ✅ 3. Razor Component: Shared/Charts/MurexDeletionsChart.razor
+@using Star.Models
+@inject IOracleDataService DataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="font-semibold mb-3">Deletions on Contracts Passed to Murex</h5>
+
+<div class="mb-4 flex gap-2">
+    <button class="btn btn-sm btn-primary" @onclick="() => GenerateGraph(false)">Show Normal</button>
+    <button class="btn btn-sm btn-outline" @onclick="() => GenerateGraph(true)">Show Zoomed</button>
 </div>
 
-@if (SelectedGraph == "sourceSystemTradeChart")
+@if (IsLoading)
 {
-    <SourceSystemTradeChart />
+    <StarLoader Message="Loading Murex Deletion Data..." />
 }
-else if (SelectedGraph == "marketEventChart")
+else if (!string.IsNullOrEmpty(ErrorMessage))
 {
-    <MarketEventChart />
-}
-else if (SelectedGraph == "stpTradeChart")
-{
-    <OtcStpTradesChart />
-}
-else if (SelectedGraph == "murexErrorFix")
-{
-    <MurexErrorFixChart />
+    <div class="text-red-600">@ErrorMessage</div>
 }
 
-<style>
-    .graph-dropdown {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        max-width: 400px;
-        margin-bottom: 2rem;
-    }
-
-    .graph-label {
-        font-size: 1rem;
-        color: #444;
-    }
-
-    .graph-select {
-        padding: 0.6rem 1rem;
-        border: 2px solid #ddd;
-        border-radius: 8px;
-        font-size: 1rem;
-        background-color: #fafafa;
-        color: #333;
-        transition: border-color 0.2s;
-    }
-
-    .graph-select:focus {
-        border-color: #4a90e2;
-        outline: none;
-    }
-</style>
+<div id="murexDeletionsChart" class="w-full h-[500px] @(IsLoading ? "hidden" : "block")"></div>
 
 @code {
-    private string? SelectedGraph;
+    private bool IsLoading;
+    private string? ErrorMessage;
 
-    private void OnGraphChange(ChangeEventArgs e)
+    private async Task GenerateGraph(bool logScale)
     {
-        SelectedGraph = e.Value?.ToString();
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var data = await DataService.GetMurexDeletionDataAsync();
+            var labels = data.Select(d => d.Week).ToList();
+            var values = data.Select(d => (double)d.Deals).ToList();
+
+            var chartData = new
+            {
+                labels,
+                values,
+                title = "Deletions on Contracts Passed to Murex",
+                xLabel = "Week",
+                yLabel = "Deals"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyLineChart", "murexDeletionsChart", chartData, logScale);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+Great! Let's set this up modularly just like the previous ones. Here's everything you need:
+
+---
+
+### 🔸 **Model**: `OtcManualWorkflowTrade.cs`  
+📁 Path: `Models/OtcManualWorkflowTrade.cs`
+```csharp
+namespace Star.Models
+{
+    public class OtcManualWorkflowTrade
+    {
+        public string Week { get; set; } = "";
+        public int ManuDeals { get; set; }
+    }
+}
+```
+
+---
+
+### 🔸 **OracleDataService Method**  
+📁 In: `Services/OracleDataService.cs`
+
+```csharp
+public async Task<List<OtcManualWorkflowTrade>> GetOtcManualWorkflowTradesAsync()
+{
+    var result = new List<OtcManualWorkflowTrade>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        WITH otc_workflow_hist AS (
+             SELECT *
+             FROM   star_workflow_hist
+             WHERE  con_no IN
+                            (SELECT con_no FROM star_contract PARTITION(product_oth)))
+        ,manu AS (
+            SELECT DISTINCT con_no FROM otc_workflow_hist WHERE ops_sts_cod = 'NOT')
+        SELECT TO_CHAR(TRUNC(w.lst_mod_dt, 'DAY'), 'YYYY-MM-DD') AS Week,
+               COUNT(1) AS ManuDeals
+        FROM   (
+                  SELECT h.con_no, h.lst_mod_dt
+                  FROM   otc_workflow_hist h
+                  WHERE  (h.con_no, h.lst_mod_dt) IN (
+                      SELECT con_no, MIN(lst_mod_dt)
+                      FROM   otc_workflow_hist
+                      WHERE  con_no IN (SELECT con_no FROM manu)
+                      GROUP  BY con_no
+                  )
+               ) w
+        WHERE  TRUNC(w.lst_mod_dt, 'DAY') < TRUNC(SYSDATE, 'DAY')
+               AND TRUNC(w.lst_mod_dt, 'DAY') > TRUNC(SYSDATE) - 364 * 4
+        GROUP  BY TRUNC(w.lst_mod_dt, 'DAY')
+        ORDER  BY TRUNC(w.lst_mod_dt, 'DAY')
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new OtcManualWorkflowTrade
+        {
+            Week = reader["Week"]?.ToString() ?? "",
+            ManuDeals = reader["ManuDeals"] != DBNull.Value ? Convert.ToInt32(reader["ManuDeals"]) : 0
+        });
+    }
+
+    return result;
+}
+```
+
+---
+
+### 🔸 **Component**: `OtcManualWorkflowChart.razor`  
+📁 Path: `Shared/Charts/OtcManualWorkflowChart.razor`
+```razor
+@using Star.Models
+@inject IOracleDataService DataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">OTC Manual Workflow Trades (Per Week)</h5>
+
+<div class="mb-3">
+    <button class="btn btn-sm btn-primary me-2" @onclick="GenerateGraph">Generate Graph</button>
+</div>
+
+@if (IsLoading)
+{
+    <StarLoader Message="Fetching OTC manual workflow data..." />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<div id="manualWorkflowChart" style="width: 100%; height: 500px;" class="@(IsLoading ? "d-none" : "")"></div>
+
+@code {
+    private bool IsLoading = false;
+    private string? ErrorMessage;
+
+    private async Task GenerateGraph()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var data = await DataService.GetOtcManualWorkflowTradesAsync();
+            var weeks = data.Select(d => d.Week).ToList();
+            var values = data.Select(d => (double)d.ManuDeals).ToList();
+
+            var chartData = new
+            {
+                labels = weeks,
+                values = values,
+                title = "OTC Manual Workflow Trades Per Week",
+                xLabel = "Week",
+                yLabel = "Manual Trades"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderLineChart", "manualWorkflowChart", chartData);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
+```
+
+---
+
+Let me know when you're ready to wire this into your `Trade.razor` page or if you'd like to go for the next graph.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Model: Models/OtcRecBreak.cs
+namespace Star.Models
+{
+    public class OtcRecBreak
+    {
+        public string Week { get; set; } = "";
+        public int RecBreaks { get; set; }
+    }
+}
+
+// OracleDataService method
+public async Task<List<OtcRecBreak>> GetOtcRecBreaksAsync()
+{
+    var result = new List<OtcRecBreak>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        with distinct_recbreaks as (
+            select con_no,  MAX(rec_ver_no) as REC_VER_NO from star_rec_hist r 
+            where r.lst_mod_dt > trunc(sysdate)-1460
+              and trunc(r.lst_mod_dt,'DAY') < trunc(sysdate,'DAY')
+              and r.rec_src = 'INT'
+              and r.rec_sts = 'DIF'
+            GROUP  BY con_no
+        ), 
+        distinct_recbreaks_with_date as (
+            select r.con_no, r.rec_ver_no, d.lst_mod_dt 
+            from star_rec_hist d, distinct_recbreaks r
+            where r.con_no = d.con_no
+              and r.rec_ver_no = d.rec_ver_no
+        )
+        select TO_CHAR(trunc(r.lst_mod_dt, 'DAY'), 'YYYY-MM-DD') as Week, count(1) as RecBreaks
+        from distinct_recbreaks_with_date r
+        join star_contract PARTITION(product_oth) c on c.con_no = r.con_no
+        where c.mrr_typ_cod IN (0, 1, 6)
+          and c.inp_dt > trunc(sysdate)-1460
+        group by trunc(r.lst_mod_dt, 'DAY')
+        order by trunc(r.lst_mod_dt, 'DAY')
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new OtcRecBreak
+        {
+            Week = reader["Week"]?.ToString() ?? "",
+            RecBreaks = reader["RecBreaks"] != DBNull.Value ? Convert.ToInt32(reader["RecBreaks"]) : 0
+        });
+    }
+
+    return result;
+}
+
+// Component: Shared/Charts/OtcRecBreaksChart.razor
+@using Star.Models
+@inject IOracleDataService DataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">OTC Intra-Day Rec Breaks (Per Week)</h5>
+<div class="mb-3">
+    <button class="btn btn-sm btn-primary me-2" @onclick="GenerateGraph">Generate Graph</button>
+</div>
+
+@if (IsLoading)
+{
+    <StarLoader Message="Loading OTC rec break data..." />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<div id="recBreakChart" style="width: 100%; height: 500px;" class="@(IsLoading ? "d-none" : "")"></div>
+
+@code {
+    private bool IsLoading = false;
+    private string? ErrorMessage;
+
+    private async Task GenerateGraph()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var data = await DataService.GetOtcRecBreaksAsync();
+            var labels = data.Select(d => d.Week).ToList();
+            var values = data.Select(d => (double)d.RecBreaks).ToList();
+
+            var chartData = new
+            {
+                labels = labels,
+                values = values,
+                title = "OTC Intra-Day Rec Breaks Per Week",
+                xLabel = "Week",
+                yLabel = "Rec Breaks"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderLineChart", "recBreakChart", chartData);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+Great! Here's how we can implement the **"OTC trades saved per minute in last 5 days"** graph as a **scatter (dot) chart** using the modular structure.
+
+---
+
+### ✅ 1. **Model** (`Models/OtcTradesPerMinute.cs`)
+```csharp
+namespace Star.Models
+{
+    public class OtcTradesPerMinute
+    {
+        public string Minute { get; set; } = string.Empty;
+        public int Trades { get; set; }
+    }
+}
+```
+
+---
+
+### ✅ 2. **Oracle Data Service Method** (`Services/OracleDataService.cs`)
+```csharp
+public async Task<List<OtcTradesPerMinute>> GetOtcTradesPerMinuteAsync()
+{
+    var result = new List<OtcTradesPerMinute>();
+
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT TO_CHAR(l.upd_timestamp, 'dd-Mon-yyyy HH24:MI'),
+               COUNT(1)
+        FROM   star_link_timestamp l, star_contract PARTITION(product_oth) c
+        WHERE  l.upd_timestamp > TRUNC(SYSDATE) - 5
+               AND l.upd_timestamp < TRUNC(SYSDATE)
+               AND l.chd_no = c.con_no
+        GROUP  BY TO_CHAR(l.upd_timestamp, 'dd-Mon-yyyy HH24:MI')
+        ORDER  BY TO_CHAR(l.upd_timestamp, 'dd-Mon-yyyy HH24:MI')
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new OtcTradesPerMinute
+        {
+            Minute = reader[0]?.ToString() ?? "",
+            Trades = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
+        });
+    }
+
+    return result;
+}
+```
+
+---
+
+### ✅ 3. **Chart Component** (`Shared/Charts/OtcTradesPerMinuteChart.razor`)
+```razor
+@using Star.Models
+@inject IOracleDataService DataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">OTC Trades Saved Per Minute (Last 5 Days)</h5>
+
+@if (IsLoading)
+{
+    <StarLoader Message="Loading trade activity..." />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<div id="tradesPerMinuteChart" style="width: 100%; height: 450px;" class="@(IsLoading ? "d-none" : "")"></div>
+
+@code {
+    private bool IsLoading = true;
+    private string? ErrorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await GenerateChartAsync();
+    }
+
+    private async Task GenerateChartAsync()
+    {
+        try
+        {
+            var data = await DataService.GetOtcTradesPerMinuteAsync();
+
+            var labels = data.Select(d => d.Minute).ToList();
+            var values = data.Select(d => (double)d.Trades).ToList();
+
+            var trace = new
+            {
+                x = labels,
+                y = values,
+                mode = "markers",
+                type = "scatter",
+                marker = new { size = 6, color = "rgb(31, 119, 180)" }
+            };
+
+            var layout = new
+            {
+                title = "OTC Trades Saved Per Minute",
+                xaxis = new { title = "Time (Minute)", automargin = true },
+                yaxis = new { title = "Trades Saved", automargin = true }
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyChart", "tradesPerMinuteChart", new[] { trace }, layout);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
+```
+
+---
+
+### ✅ 4. **JS Interop (Already Present)** (`wwwroot/js/plotlyInterop.js`)
+Make sure this function exists:
+```js
+window.renderPlotlyChart = (divId, traces, layout) => {
+    Plotly.newPlot(divId, traces, layout, { responsive: true });
+};
+```
+
+---
+
+### ✅ 5. **Usage**
+Use the component on your page (e.g. `Trade.razor`):
+```razor
+<OtcTradesPerMinuteChart />
+```
+
+---
+
+Ready to drop the next query? Let’s keep the momentum! 🚀
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// 1. Model
+namespace Star.Models
+{
+    public class MwRecBreakPerThousand
+    {
+        public string Week { get; set; } = string.Empty;
+        public double BreaksPerThousand { get; set; }
+    }
+}
+
+// 2. OracleDataService Method
+public async Task<List<MwRecBreakPerThousand>> GetMwRecBreaksPerThousandAsync()
+{
+    var result = new List<MwRecBreakPerThousand>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+    SELECT t1.\"Week\",
+           t1.\"Number of breaks\" * 1000 / t2.\"Total deals\" AS \"Rec breaks / 1000 deals\"
+      FROM (SELECT trunc(i.lst_mod_dt, 'DAY') AS \"Week\",
+                   COUNT(1) AS \"Number of breaks\"
+              FROM star_import_rec_hist i,
+                   star_contract        PARTITION(product_oth) c,
+                   star_src_sys         s
+             WHERE i.con_no = c.con_no
+               AND i.rec_src = s.src_sys_cod
+               AND trunc(i.lst_mod_dt, 'DAY') > trunc(SYSDATE, 'DAY') - (365 * 4)
+               AND i.rec_sts = 'DIF'
+               AND i.rec_src = 'SWI'
+             GROUP BY trunc(i.lst_mod_dt, 'DAY')
+             ORDER BY \"Week\" ASC) t1,
+           (SELECT trunc(c.inp_dt, 'DAY') AS \"Week\",
+                   COUNT(1) AS \"Total deals\"
+              FROM star_contract PARTITION(product_oth) c
+             WHERE src_sys_cod = 'SWI'
+               AND trunc(c.inp_dt, 'DAY') > trunc(SYSDATE, 'DAY') - (365 * 4)
+             GROUP BY trunc(c.inp_dt, 'DAY')
+             ORDER BY trunc(c.inp_dt, 'DAY') ASC) t2
+     WHERE t1.\"Week\" = t2.\"Week\"
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new MwRecBreakPerThousand
+        {
+            Week = reader[0]?.ToString() ?? "",
+            BreaksPerThousand = reader[1] != DBNull.Value ? Convert.ToDouble(reader[1]) : 0
+        });
+    }
+
+    return result;
+}
+
+
+
+
+
+
+
+
+
+
+// Model: Models/MtmContract.cs
+namespace Star.Models
+{
+    public class MtmContract
+    {
+        public string Week { get; set; } = string.Empty;
+        public int TotalContracts { get; set; }
+    }
+}
+
+// OracleDataService Method:
+public async Task<List<MtmContract>> GetMtmContractsBookedPerWeekAsync()
+{
+    var result = new List<MtmContract>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT TRUNC(inp_dt, 'DAY') AS Week, COUNT(1) AS TotalContracts
+        FROM   star_contract PARTITION(product_oth)
+        WHERE  TRUNC(inp_dt, 'DAY') > TRUNC(SYSDATE) - 365 * 4
+               AND TRUNC(inp_dt, 'DAY') < TRUNC(SYSDATE, 'DAY')
+               AND con_no IN (
+                   SELECT con_no FROM star_mtm WHERE lgcl_del_flg = 'N')
+               AND mrr_typ_cod IN (0, 1, 6)
+        GROUP  BY TRUNC(inp_dt, 'DAY')
+        ORDER  BY TRUNC(inp_dt, 'DAY')
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new MtmContract
+        {
+            Week = reader[0]?.ToString() ?? string.Empty,
+            TotalContracts = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
+        });
+    }
+
+    return result;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Here is the complete implementation for the line chart **"OTC contracts booked per week (excluding synthetics)"** following the modular structure:
+
+---
+
+### ✅ **Model: `OtcContractsBooked.cs`**
+Place in: `Star/Models/`
+```csharp
+namespace Star.Models
+{
+    public class OtcContractsBooked
+    {
+        public string Week { get; set; }
+        public int DealsBooked { get; set; }
+    }
+}
+```
+
+---
+
+### ✅ **Oracle Service Method**
+In: `OracleDataService.cs` (inside `Star/Services/`)
+```csharp
+public async Task<List<OtcContractsBooked>> GetOtcContractsBookedPerWeekAsync()
+{
+    var result = new List<OtcContractsBooked>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT TRUNC(c.inp_dt, 'DAY') AS ""Week"",
+               COUNT(1) AS ""Deals booked""
+        FROM   star_contract PARTITION(product_oth) c
+        WHERE  c.mrr_typ_cod IN (0, 1, 6)
+               AND c.inp_dt > (SYSDATE - 364 * 4)
+               AND c.inp_dt < TRUNC(SYSDATE,'DAY')
+        GROUP  BY TRUNC(c.inp_dt, 'DAY')
+        ORDER  BY ""Week"" ASC
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new OtcContractsBooked
+        {
+            Week = reader[0]?.ToString() ?? "",
+            DealsBooked = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
+        });
+    }
+
+    return result;
+}
+```
+
+---
+
+### ✅ **Reusable Chart Component: `OtcContractsBookedChart.razor`**
+Place in: `Shared/Charts/`
+```razor
+@inject IOracleDataService OracleDataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">OTC Contracts Booked Per Week (Excl. Synthetics)</h5>
+
+@if (IsLoading)
+{
+    <StarLoader Message="Fetching OTC booking data..." />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<div id="otcBookedChart" style="width: 100%; height: 400px;" class="@(IsLoading ? "d-none" : "")"></div>
+
+@code {
+    private bool IsLoading = true;
+    private string? ErrorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var data = await OracleDataService.GetOtcContractsBookedPerWeekAsync();
+            var labels = data.Select(d => d.Week).ToList();
+            var values = data.Select(d => (double)d.DealsBooked).ToList();
+
+            var chartData = new
+            {
+                labels,
+                values,
+                title = "OTC Contracts Booked Per Week (Last 4 Years)",
+                xLabel = "Week",
+                yLabel = "Deals Booked"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyLineChart", "otcBookedChart", chartData);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
+```
+
+Let me know when you're ready to plug this into your Trade page or continue with the next chart.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Model: Star/Models/ActiveUserByRole.cs
+namespace Star.Models
+{
+    public class ActiveUserByRole
+    {
+        public string Role { get; set; }
+        public int UserCount { get; set; }
+    }
+}
+
+// OracleDataService.cs
+public async Task<List<ActiveUserByRole>> GetActiveUsersByRoleAsync()
+{
+    var result = new List<ActiveUserByRole>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT g.dsc,
+               COUNT(DISTINCT l.supp_user) AS location
+        FROM   star_login_audit l,
+               gfit_groups g
+        WHERE  TRUNC(upd_timestamp) > SYSDATE - 30
+               AND l.adt_act = 'LIN'
+               AND g.emp_grp_cod = l.emp_grp_cod
+               AND l.adt_appl = 'POL'
+               AND l.supp_user = l.asmd_user
+               AND appl_ver <> '1.0.0'
+        GROUP  BY l.emp_grp_cod, g.dsc
+        ORDER  BY location DESC
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new ActiveUserByRole
+        {
+            Role = reader[0]?.ToString() ?? string.Empty,
+            UserCount = reader[1] != DBNull.Value ? Convert.ToInt32(reader[1]) : 0
+        });
+    }
+    return result;
+}
+
+// Component: Shared/Charts/ActiveUsersByRoleChart.razor
+@inject IOracleDataService OracleDataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">Active Users by Role (Last Month)</h5>
+@if (IsLoading)
+{
+    <StarLoader Message="Loading user role activity..." />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+<div id="activeUsersChart" style="width: 100%; height: 400px;" class="@(IsLoading ? "d-none" : "")"></div>
+
+@code {
+    private bool IsLoading = true;
+    private string? ErrorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var data = await OracleDataService.GetActiveUsersByRoleAsync();
+            var labels = data.Select(d => d.Role).ToList();
+            var values = data.Select(d => (double)d.UserCount).ToList();
+
+            var chartData = new
+            {
+                labels,
+                values,
+                title = "Active Users by Role (Last Month)",
+                xLabel = "Role",
+                yLabel = "Number of Users"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "activeUsersChart", chartData, false);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+It looks like the attempt to preview the data failed because no actual data was provided or fetched in the last step. But don’t worry — we’ll keep going with what you asked.
+
+Here’s how we can modularly implement the **"Active users per location last month"** graph using a bar chart in your Blazor project:
+
+---
+
+### ✅ Step 1: Add Model
+
+**Path:** `Star/Models/UserLocationStats.cs`
+```csharp
+namespace Star.Models
+{
+    public class UserLocationStats
+    {
+        public string Location { get; set; }
+        public int UserCount { get; set; }
+    }
+}
+```
+
+---
+
+### ✅ Step 2: Update `IOracleDataService`
+
+**Path:** `Star/Services/IOracleDataService.cs`
+```csharp
+Task<List<UserLocationStats>> GetActiveUsersPerLocationAsync();
+```
+
+---
+
+### ✅ Step 3: Add Method in `OracleDataService`
+
+**Path:** `Star/Services/OracleDataService.cs`
+```csharp
+public async Task<List<UserLocationStats>> GetActiveUsersPerLocationAsync()
+{
+    var result = new List<UserLocationStats>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT lo.loc_name, COUNT(DISTINCT l.supp_user) AS users
+        FROM gfit_groups g, star_echo_location lo
+        JOIN (
+            SELECT a.*, CASE
+                WHEN a.adt_loc LIKE 'NYC' THEN 'NYK'
+                ELSE a.adt_loc
+            END AS loc
+            FROM star_login_audit a
+        ) l ON l.loc = lo.loc_id
+        WHERE trunc(upd_timestamp) > SYSDATE - 30
+        AND l.adt_act = 'LIN'
+        AND l.adt_appl = 'POL'
+        AND g.emp_grp_cod = l.emp_grp_cod
+        AND l.supp_user = l.asmd_user
+        AND l.appl_ver <> '1.0.0'
+        GROUP BY lo.loc_name
+        ORDER BY users DESC
+    ";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new UserLocationStats
+        {
+            Location = reader["loc_name"].ToString(),
+            UserCount = Convert.ToInt32(reader["users"])
+        });
+    }
+
+    return result;
+}
+```
+
+---
+
+### ✅ Step 4: Create Component
+
+**Path:** `Star/Shared/Charts/ActiveUsersLocationChart.razor`
+```razor
+@inject IOracleDataService DataService
+@inject IJSRuntime JSRuntime
+
+<h5 class="fw-semibold">Active Users by Location (Last 30 Days)</h5>
+@if (IsLoading)
+{
+    <StarLoader Message="Fetching location-wise active users..." />
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<div id="activeUsersLocationChart" style="width: 100%; height: 400px;" class="@(IsLoading ? "d-none" : "")"></div>
+
+@code {
+    private bool IsLoading = true;
+    private string? ErrorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var data = await DataService.GetActiveUsersPerLocationAsync();
+            var labels = data.Select(x => x.Location).ToList();
+            var values = data.Select(x => (double)x.UserCount).ToList();
+
+            var chartData = new
+            {
+                labels,
+                values,
+                title = "Active Users by Location (Last 30 Days)",
+                xLabel = "Location",
+                yLabel = "Number of Users"
+            };
+
+            await JSRuntime.InvokeVoidAsync("renderPlotlyBarChart", "activeUsersLocationChart", chartData, false);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
+```
+
+---
+
+Let me know when you want to wire it to the `Trade.razor` menu, or add other charts next!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Models/SlowDealSearch.cs
+namespace Star.Models
+{
+    public class SlowDealSearch
+    {
+        public string Search { get; set; } = string.Empty;
+        public double AvgTimeSeconds { get; set; }
+    }
+
+    public class SlowUserOperation
+    {
+        public string Operation { get; set; } = string.Empty;
+        public double AvgTimeSeconds { get; set; }
+    }
+
+    public class ToolUsage
+    {
+        public string Tools { get; set; } = string.Empty;
+        public int TimesUsed { get; set; }
+    }
+}
+
+// OracleDataService.cs (add inside OracleDataService class)
+public async Task<List<SlowDealSearch>> GetSlowDealSearchesAsync()
+{
+    var result = new List<SlowDealSearch>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT * FROM (
+            SELECT NVL(a.detail, '(none)') AS Search, TRUNC(AVG(a.duration_ms)/1000) AS AvgTime
+            FROM star_action_audit a
+            WHERE mod_dt > TRUNC(SYSDATE)-7
+            AND a.feature = 'Deal Enquiry - Run'
+            GROUP BY detail
+            HAVING COUNT(1) > 5
+            ORDER BY AVG(duration_ms) DESC
+        )
+        WHERE ROWNUM <= 25";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new SlowDealSearch
+        {
+            Search = reader["Search"]?.ToString() ?? "",
+            AvgTimeSeconds = reader["AvgTime"] != DBNull.Value ? Convert.ToDouble(reader["AvgTime"]) : 0
+        });
+    }
+    return result;
+}
+
+public async Task<List<SlowUserOperation>> GetSlowUserOperationsAsync()
+{
+    var result = new List<SlowUserOperation>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT * FROM (
+            SELECT feature || ' ' || detail AS Operation, TRUNC(AVG(a.duration_ms)/1000) AS AvgTime
+            FROM star_action_audit a
+            WHERE mod_dt > TRUNC(SYSDATE)-7
+            GROUP BY feature_type, feature, detail
+            HAVING AVG(duration_ms) > 30000 AND COUNT(1) > 5
+            ORDER BY AVG(duration_ms) DESC
+        )
+        WHERE ROWNUM <= 25";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new SlowUserOperation
+        {
+            Operation = reader["Operation"]?.ToString() ?? "",
+            AvgTimeSeconds = reader["AvgTime"] != DBNull.Value ? Convert.ToDouble(reader["AvgTime"]) : 0
+        });
+    }
+    return result;
+}
+
+public async Task<List<SlowUserOperation>> GetSlowUserOperationsByTypeAsync()
+{
+    var result = new List<SlowUserOperation>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT feature AS Operation, TRUNC(AVG(a.duration_ms)/1000) AS AvgTime
+        FROM star_action_audit a
+        WHERE mod_dt > TRUNC(SYSDATE)-7
+        GROUP BY feature_type, feature
+        HAVING AVG(duration_ms) > 15000 AND COUNT(1) > 5
+        ORDER BY AVG(duration_ms) DESC";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new SlowUserOperation
+        {
+            Operation = reader["Operation"]?.ToString() ?? "",
+            AvgTimeSeconds = reader["AvgTime"] != DBNull.Value ? Convert.ToDouble(reader["AvgTime"]) : 0
+        });
+    }
+    return result;
+}
+
+public async Task<List<ToolUsage>> GetToolsUsedLastMonthAsync()
+{
+    var result = new List<ToolUsage>();
+    using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        SELECT r.feature AS Tools, COUNT(1) AS TimesUsed
+        FROM star_action_audit r
+        WHERE r.mod_dt > TRUNC(SYSDATE)-30
+        AND feature_type IN ('TOOLS')
+        GROUP BY r.feature
+        ORDER BY TimesUsed DESC";
+
+    using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        result.Add(new ToolUsage
+        {
+            Tools = reader["Tools"]?.ToString() ?? "",
+            TimesUsed = reader["TimesUsed"] != DBNull.Value ? Convert.ToInt32(reader["TimesUsed"]) : 0
+        });
+    }
+    return result;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
