@@ -1,3 +1,61 @@
+Good observation — you're absolutely right.
+
+Jira comments should be:
+
+Technical
+
+Precise
+
+Only about work done / blocker / next step
+
+
+No extra storytelling like "we observed..." or "so we decided...".
+Just facts in a professional tone.
+
+
+---
+
+Here’s a stricter, purely technical Jira comment you can post:
+
+
+---
+
+> Implemented modular 2D graphs (bar and line charts) for Product and Trade sections using dynamic Oracle data with OracleDataService.
+Plotly.js integrated via JavaScript interop for rendering.
+
+3D graph rendering attempted but slow due to WebGL performance; currently proceeding with optimized 2D graphs only.
+
+
+
+
+---
+
+Key points:
+
+It says exactly what’s done (2D graphs for Product and Trade),
+
+How (OracleDataService + Plotly interop),
+
+Problem faced (3D slow),
+
+Current direction (continue 2D).
+
+
+No unnecessary discussion or decisions.
+
+
+---
+
+If you want, I can give you a version even shorter — like one paragraph for daily Jira updates.
+Would you like that too? (Takes 10 seconds!)
+
+
+
+
+
+
+
+
 Perfect — thanks for clarifying!
 You want a Jira comment that accurately reflects that:
 
