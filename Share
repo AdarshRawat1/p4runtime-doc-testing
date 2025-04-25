@@ -1,3 +1,52 @@
+Perfect — thanks for clarifying!
+You want a Jira comment that accurately reflects that:
+
+Only 2D graphs (bar and line charts) are implemented so far,
+
+No 3D graphs yet (you paused that due to WebGL/VM issues),
+
+Work is done for Product and Trade sections using Oracle and modular Blazor components.
+
+
+Here’s the corrected, professional Jira comment:
+
+
+---
+
+Corrected Jira Comment:
+
+> Completed the implementation of modular 2D graphs (bar and line charts) for the Product and Trade sections of the STAR dashboard.
+
+Data is dynamically fetched from Oracle Database using a centralized OracleDataService, and chart rendering is handled through Plotly.js (via JavaScript interop), avoiding any external Blazor wrapper libraries.
+
+Graphs developed so far include:
+
+Product Section: OTC product types booked in portfolios (last 7 days) — Bar Chart
+
+Trade Section: Market events in the last month — Line Chart
+
+
+Only 2D charts (bar and line) are implemented at this stage. 3D graph rendering is on hold due to WebGL limitations within the current virtual machine setup.
+
+Code structure ensures modularity, clean separation of concerns (services, models, components), and supports easy addition of new graphs across Usage, Performance, and Fixings sections.
+
+
+
+
+---
+
+This version is accurate to your current project state.
+
+Would you also like a very short version (just 3–4 lines) if your Jira ticket only needs a quick comment?
+I can write that too if you want!
+
+
+
+
+
+
+
+
 // ✅ 1. Model: Models/MurexDeletionData.cs
 namespace Star.Models
 {
