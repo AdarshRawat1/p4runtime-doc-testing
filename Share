@@ -135,3 +135,10 @@ But with this bundle above, it’ll work 99.9% now.
 
 Want me to zip and export all files as .zip for instant replacement?
 
+
+
+
+
+echo "[{ \"Product\": \"Test\", \"TotalTrades\": 99 }]" | python PythonTools/render.py > test.png
+
+
