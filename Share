@@ -1,47 +1,83 @@
-public class GraphService : IGraphService
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Hosting;
+using StarTrends.Data;
+
+namespace StarTrends.Services
 {
-    private readonly IGraphDataRepo _repo;
-    private readonly string _chartPath;
-
-    public GraphService(IGraphDataRepo repo)
+    public class GraphService : IGraphService
     {
-        _repo = repo;
-        _chartPath = Path.Combine("wwwroot", "charts", "otc-product-types.png");
-    }
+        private readonly IGraphDataRepo _repo;
+        private readonly string _chartFile;
+        private readonly string _pythonToolsDir;
 
-    public async Task<byte[]> GetCachedChartAsync()
-    {
-        var path = Path.Combine(AppContext.BaseDirectory, _chartPath);
-        return await File.ReadAllBytesAsync(path);
-    }
-
-    public async Task RegenerateChartAsync()
-    {
-        var raw = await _repo.FetchOtcDataAsync(7);
-        var payload = JsonSerializer.Serialize(raw, new JsonSerializerOptions
+        public GraphService(
+            IGraphDataRepo repo,
+            IWebHostEnvironment env       // <- injected web‐host environment
+        )
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+            _repo = repo;
 
-        var psi = new ProcessStartInfo
+            // 1) Point to the *project* wwwroot/charts folder:
+            var chartsDir = Path.Combine(env.ContentRootPath, "wwwroot", "charts");
+            Directory.CreateDirectory(chartsDir);
+
+            // 2) Full path to the PNG in your project:
+            _chartFile = Path.Combine(chartsDir, "otc-product-types.png");
+
+            // 3) Where your PythonTools folder lives in the project:
+            _pythonToolsDir = Path.Combine(env.ContentRootPath, "PythonTools");
+
+            Console.WriteLine($"[GRAPH SERVICE] Will write chart to: {_chartFile}");
+            Console.WriteLine($"[GRAPH SERVICE] PythonTools dir: {_pythonToolsDir}");
+        }
+
+        public async Task<byte[]> GetCachedChartAsync()
         {
-            FileName = "python",
-            Arguments = $"PythonTools/render.py {_chartPath}",
-            RedirectStandardInput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = AppContext.BaseDirectory
-        };
+            // Always read from the project wwwroot/charts folder
+            return await File.ReadAllBytesAsync(_chartFile);
+        }
 
-        using var proc = Process.Start(psi);
-        await proc.StandardInput.WriteAsync(payload);
-        proc.StandardInput.Close();
+        public async Task RegenerateChartAsync()
+        {
+            // 1) Fetch your data
+            var raw = await _repo.FetchOtcDataAsync(7);
+            var payload = JsonSerializer.Serialize(raw, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
 
-        var error = await proc.StandardError.ReadToEndAsync();
-        if (!string.IsNullOrWhiteSpace(error))
-            Console.WriteLine("PYTHON ERROR: " + error);
+            // 2) Launch Python to render into _chartFile
+            var psi = new ProcessStartInfo
+            {
+                FileName = "python",
+                Arguments = $"render.py \"{_chartFile}\"",
+                RedirectStandardInput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = _pythonToolsDir
+            };
 
-        await proc.WaitForExitAsync();
+            Console.WriteLine($"[GRAPH SERVICE] Spawning python: {psi.FileName} {psi.Arguments}");
+
+            using var proc = Process.Start(psi);
+            if (proc == null)
+                throw new InvalidOperationException("Failed to start Python process.");
+
+            // 3) Send JSON to Python’s stdin
+            await proc.StandardInput.WriteAsync(payload);
+            proc.StandardInput.Close();
+
+            // 4) Capture any errors
+            var error = await proc.StandardError.ReadToEndAsync();
+            if (!string.IsNullOrWhiteSpace(error))
+                Console.WriteLine($"[PYTHON ERROR] {error}");
+
+            await proc.WaitForExitAsync();
+        }
     }
 }
