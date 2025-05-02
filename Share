@@ -496,3 +496,146 @@ app.Run();
 </body>
 </html>
 
+
+
+
+
+
+
+
+
+
+Let’s make sure you’ve got the minimum host-page setup and the proper endpoint mappings. Follow these steps exactly:
+
+
+---
+
+1) Program.cs
+
+Replace your current endpoint wiring with this:
+
+using StarTrends.Data;
+using StarTrends.Services;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// 1) Services
+builder.Services.AddControllers();
+builder.Services.AddMemoryCache();
+
+builder.Services.AddScoped<IGraphDataRepo, OracleDataRepo>();
+builder.Services.AddScoped<IGraphService,   GraphService>();
+
+// Blazor Server
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+
+var app = builder.Build();
+
+// 2) Middleware
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error");
+    app.UseHsts();
+}
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+app.UseRouting();
+
+// 3) Endpoints — the order here is critical
+app.MapControllers();           // <-- your /api/graphs
+app.MapRazorPages();            // <-- enables serving Pages/*.cshtml
+app.MapBlazorHub();             // <-- SignalR hub for Blazor
+app.MapFallbackToPage("/_Host");// <-- fallback to Pages/_Host.cshtml
+
+app.Run();
+
+> Key: you must call app.MapRazorPages() before MapFallbackToPage.
+
+
+
+Also remove any calls to AddRazorComponents(), AddInteractiveServerComponents(), or MapRazorComponents(). Those are for the experimental components package and conflict with the standard Blazor Server routing.
+
+
+---
+
+2) Add the host page at Pages/_Host.cshtml
+
+Create a new file Pages/_Host.cshtml (exact path and name):
+
+@page "/"
+@namespace StarTrends.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>StarTrends Dashboard</title>
+  <base href="~/" />
+  <link href="css/bootstrap/bootstrap.min.css" rel="stylesheet" />
+  <link href="css/site.css" rel="stylesheet" />
+</head>
+<body>
+  <app>
+    <component type="typeof(App)" render-mode="ServerPrerendered" />
+  </app>
+
+  <script src="_framework/blazor.server.js"></script>
+</body>
+</html>
+
+@page "/" makes it respond on the root URL.
+
+<component type="typeof(App)" …> boots your Blazor component tree.
+
+
+
+---
+
+3) Ensure you have App.razor in your project root
+
+If you don’t, add App.razor alongside Program.cs:
+
+<Router AppAssembly="@typeof(Program).Assembly">
+  <Found Context="routeData">
+    <RouteView RouteData="@routeData" />
+  </Found>
+  <NotFound>
+    <p>Sorry, there's nothing at this address.</p>
+  </NotFound>
+</Router>
+
+
+---
+
+4) Verify your folder structure
+
+ChartDashboard/
+├─ Pages/
+│   ├ _Host.cshtml
+│   └ App.razor
+├─ Controllers/
+│   GraphController.cs
+├─ Data/
+│   IGraphDataRepo.cs
+│   OracleDataRepo.cs
+├─ Services/
+│   IGraphService.cs
+│   GraphService.cs
+├─ Shared/
+│   ChartViewer.razor
+├─ PythonTools/
+│   render.py
+├─ Program.cs
+└─ appsettings.json
+
+
+---
+
+After making these changes, clean & rebuild your solution. Then browse to / — you should land on _Host.cshtml, Blazor will start, and no more “fallback endpoint” errors.
+
+
+
