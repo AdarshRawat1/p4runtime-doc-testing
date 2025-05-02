@@ -1,78 +1,83 @@
-Thanks, bro! From your screenshot:
+Great update, bro — your frontend is working fine! The message:
 
-* There's **no `/api/graphs/otc-product-types` call** visible in the network tab.
-* So either:
+> **"Received empty image. Chart failed to load."**
 
-  1. The `<img>` never made the request (e.g. `_img` is null), or
-  2. The request failed silently and didn’t show up (unlikely unless cached)
+confirms that:
+
+* The API **did return a response**, but
+* **The Python process probably didn't write any image**
+  (or crashed silently / exited before drawing)
 
 ---
 
-### ✅ Let’s verify it step-by-step
+### ✅ What to do now: Add error logging to catch Python failures
 
-Please open `ChartViewer.razor` and update it like this for logging:
+Update `GraphService.cs` like this:
 
-```razor
-@inject NavigationManager Nav
-@inject HttpClient Http
-
-<p>@_status</p>
-
-@if (_img != null)
+```csharp
+public async Task<byte[]> GenerateOtcProductTypesChartAsync()
 {
-    <img src="data:image/png;base64,@_img" alt="Chart" style="max-width:100%;" />
-}
-else
-{
-    <p>Chart failed to load.</p>
-}
+    var raw = await _repo.FetchOtcDataAsync(7);
+    var payload = JsonSerializer.Serialize(raw);
 
-@code {
-    private string? _img;
-    private string _status = "Loading…";
-
-    protected override async Task OnInitializedAsync()
+    var psi = new ProcessStartInfo
     {
-        try
-        {
-            var baseUri = Nav.BaseUri;
-            _status = "Requesting chart…";
-            var bytes = await Http.GetByteArrayAsync($"{baseUri}api/graphs/otc-product-types");
+        FileName = "python",
+        Arguments = "PythonTools/render.py",
+        RedirectStandardInput = true,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        WorkingDirectory = AppContext.BaseDirectory
+    };
 
-            if (bytes.Length > 0)
-            {
-                _img = Convert.ToBase64String(bytes);
-                _status = "Chart loaded!";
-            }
-            else
-            {
-                _status = "Received empty image.";
-            }
-        }
-        catch (Exception ex)
-        {
-            _status = $"Chart failed: {ex.Message}";
-        }
+    using var proc = Process.Start(psi)
+        ?? throw new InvalidOperationException("Could not start Python renderer");
+
+    await proc.StandardInput.WriteAsync(payload);
+    proc.StandardInput.Close();
+
+    // ✅ Log any errors from Python stderr
+    string errorOutput = await proc.StandardError.ReadToEndAsync();
+    if (!string.IsNullOrWhiteSpace(errorOutput))
+    {
+        Console.WriteLine("=== PYTHON STDERR ===");
+        Console.WriteLine(errorOutput);
     }
+
+    using var ms = new MemoryStream();
+    await proc.StandardOutput.BaseStream.CopyToAsync(ms);
+    await proc.WaitForExitAsync();
+
+    return ms.ToArray();
 }
 ```
 
 ---
 
-### ✅ Result
+### ✅ Then check the Visual Studio Output / Terminal Log:
 
-1. You’ll see status text (`Loading…`, `Chart loaded!`, or the actual exception).
-2. If Python fails or API throws an error, you’ll see it printed directly on screen.
-3. Check console output for logs (especially if you add logging in `GraphService.cs` as well).
+Look for:
+
+* `ModuleNotFoundError: No module named 'matplotlib'`
+* `RuntimeError: could not connect to display`
+* `SyntaxError` or anything else from Python
 
 ---
 
-If that shows an error like:
+### ⏱️ Regarding "Giving Python time to run"
 
-> `"Python: ImportError: matplotlib not found"`
-> or
-> `"No display found"`
+You don’t need to wait manually — you're already using:
 
-… then we know Python is the issue and I’ll help you fix that part too.
+```csharp
+await proc.WaitForExitAsync();
+```
 
-Let me know what message shows up after adding this.
+That ensures C# waits for the Python process to finish **before continuing**.
+
+But if Python errors out instantly or returns no image, you'll still get an empty stream — which is why this error log is essential.
+
+---
+
+Let me know what Python stderr says and I’ll fix it immediately.
