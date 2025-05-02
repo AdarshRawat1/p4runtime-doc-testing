@@ -398,3 +398,66 @@ Make sure **PythonTools/render.py** is copied to output (in your `.csproj`):
 3. **Replace** any hard‐coded values (e.g. connection string) and tweak sizing or styles as needed.  
 
 This gives you a fully working baseline—now you can layer on caching, per‐chart intervals, last‐updated headers, and a refresh button whenever you’re ready.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+using StarTrends.Data;
+using StarTrends.Services;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// 1) Services
+builder.Services.AddControllers();
+builder.Services.AddMemoryCache();
+
+// Oracle data + chart services
+builder.Services.AddScoped<IGraphDataRepo, OracleDataRepo>();
+builder.Services.AddScoped<IGraphService,   GraphService>();
+
+// Blazor Server
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+
+var app = builder.Build();
+
+// 2) Middleware pipeline
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error");  // or your error page
+    app.UseHsts();
+}
+
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+
+app.UseRouting();
+
+// 3) Endpoints
+app.MapControllers();            // your /api/graphs endpoints
+app.MapBlazorHub();              // SignalR hub for Blazor Server
+app.MapFallbackToPage("/_Host"); // serve Pages/_Host.cshtml for everything else
+
+app.Run();
