@@ -461,3 +461,38 @@ app.MapBlazorHub();              // SignalR hub for Blazor Server
 app.MapFallbackToPage("/_Host"); // serve Pages/_Host.cshtml for everything else
 
 app.Run();
+
+
+
+
+
+
+
+
+
+
+
+
+
+@page "/"
+@namespace StarTrends.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ChartDashboard</title>
+  <base href="~/" />
+  <link href="css/bootstrap/bootstrap.min.css" rel="stylesheet" />
+  <link href="css/site.css" rel="stylesheet" />
+</head>
+<body>
+  <!-- This <app> element is where Blazor Server will render your components -->
+  <app>
+    <component type="typeof(App)" render-mode="ServerPrerendered" />
+  </app>
+
+  <script src="_framework/blazor.server.js"></script>
+</body>
+</html>
+
