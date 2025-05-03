@@ -1,54 +1,101 @@
-@inject HttpClient Http
+Thought for a couple of seconds
+
+
+Replace your two‐endpoint controller with a single “serve‐through‐API” action. Here’s the complete **GraphController.cs** you should drop in:
+
+```csharp
+using System;
+using System.IO;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
+using StarTrends.Services;
+
+namespace StarTrends.Controllers
+{
+    [ApiController]
+    [Route("api/graphs")]
+    public class GraphController : ControllerBase
+    {
+        private readonly IGraphService _svc;
+
+        public GraphController(IGraphService svc)
+        {
+            _svc = svc;
+        }
+
+        /// <summary>
+        /// Returns the OTC product‐types chart PNG.
+        /// If ?refresh=true is passed, it will regenerate first.
+        /// </summary>
+        /// <param name="refresh">whether to re‐run Python before returning</param>
+        [HttpGet("otc-chart")]
+        public async Task<IActionResult> GetOtcChart([FromQuery] bool refresh = false)
+        {
+            if (refresh)
+            {
+                await _svc.RegenerateChartAsync();
+            }
+
+            var img = await _svc.GetCachedChartAsync();
+            if (img == null || img.Length == 0)
+                return NotFound();
+
+            return File(img, "image/png");
+        }
+    }
+}
+```
+
+### How it works
+
+1. **Single URL**: `/api/graphs/otc-chart`
+2. **Regeneration**: adding `?refresh=true` in the query string will call your Python‐backed renderer before returning the bytes.
+3. **No more static‐files gymnastics**—the browser always requests through this endpoint.
+
+---
+
+#### Update your Blazor component
+
+Now point your `<img>` at that endpoint with a cache‐buster. In **Shared/ChartViewer.razor**:
+
+```razor
 @inject NavigationManager Nav
 
 <div class="chart-container">
-  <img 
-    src="@_chartUrl" 
-    alt="OTC Product Types Chart" 
-    style="max-width:100%; display:block; margin-bottom:0.5rem;" />
+  <img src="@_chartUrl" alt="OTC Product Types" style="max-width:100%;" />
 
-  <button class="btn btn-sm btn-outline-primary mt-2" @onclick="RefreshChart" disabled="@_loading">
-    @(_loading ? "Refreshing…" : "↻ Refresh")
+  <button class="btn btn-sm btn-outline-primary mt-2" @onclick="RefreshChart">
+    ↻ Refresh
   </button>
 </div>
 
 @code {
   private string _chartUrl = "";
-  private bool   _loading  = false;
 
   protected override void OnInitialized()
   {
-    // Set initial URL
-    _UpdateChartUrl();
+    // initial load (no refresh)
+    SetChartUrl(refresh: false);
   }
 
-  private void _UpdateChartUrl()
+  private void SetChartUrl(bool refresh)
   {
-    // Build an absolute URL so HttpClient.GetAsync will go to the right place
-    _chartUrl = $"{Nav.BaseUri}charts/otc-product-types.png?ts={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+    // include both refresh flag and timestamp to bust cache
+    var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    _chartUrl = $"{Nav.BaseUri}api/graphs/otc-chart?refresh={refresh.ToString().ToLower()}&ts={ts}";
   }
 
-  private async Task RefreshChart()
+  private Task RefreshChart()
   {
-    _loading = true;
-    StateHasChanged();
-
-    // IMPORTANT: use absolute URL here
-    var refreshUrl = $"{Nav.BaseUri}api/graphs/refresh-otc-chart";
-    var resp = await Http.GetAsync(refreshUrl);
-
-    if (resp.IsSuccessStatusCode)
-    {
-      // bump the cache-buster so the browser will re-fetch
-      _UpdateChartUrl();
-    }
-    else
-    {
-      // optionally handle error (e.g. show toast)
-      Console.Error.WriteLine($"Refresh failed: {resp.StatusCode}");
-    }
-
-    _loading = false;
-    StateHasChanged();
+    // switch to refresh + new ts
+    SetChartUrl(refresh: true);
+    return Task.CompletedTask;
   }
 }
+```
+
+With these two changes:
+
+* Clicking “Refresh” calls the same `/api/graphs/otc-chart?refresh=true&ts=...`
+* Your controller regenerates (if asked), then returns the new PNG bytes directly
+* The `<img>` updates immediately, no manual folder‐watching or static‐file tweaks required.
