@@ -1,86 +1,67 @@
-using System;
-using System.Diagnostics;
-using System.IO;
-using System.Text.Json;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Hosting;
-using StarTrends.Data;
+@inject HttpClient Http
+@inject NavigationManager Nav
 
-namespace StarTrends.Services
-{
-    public class GraphService : IGraphService
+<div class="chart-container">
+  @if (_loading)
+  {
+    <p><em>Updating chart…</em></p>
+  }
+  <img 
+    src="@_chartUrl" 
+    alt="OTC Product Types Chart" 
+    style="max-width:100%; display:block; margin-bottom:0.5rem;" />
+
+  @if (!string.IsNullOrEmpty(LastUpdated))
+  {
+    <div class="text-muted" style="font-size:0.9rem">
+      Last updated: @LastUpdated
+    </div>
+  }
+
+  <button class="btn btn-sm btn-outline-primary mt-2" @onclick="RefreshChart">
+    ↻ Refresh
+  </button>
+</div>
+
+@code {
+  private string _chartUrl = "";
+  private bool   _loading  = false;
+  private string? LastUpdated;
+
+  protected override void OnInitialized()
+  {
+    // Build initial URL (cache-busted once)
+    UpdateChartUrl();
+  }
+
+  private void UpdateChartUrl()
+  {
+    // BaseUri ends with '/'
+    _chartUrl = $"{Nav.BaseUri}charts/otc-product-types.png?ts={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+  }
+
+  private async Task RefreshChart()
+  {
+    _loading = true;
+    StateHasChanged();
+
+    // Trigger backend to regenerate and save the new PNG
+    var resp = await Http.GetAsync("api/graphs/refresh-otc-chart");
+    if (resp.IsSuccessStatusCode)
     {
-        private readonly IGraphDataRepo _repo;
-        private readonly string _chartFile;
-        private readonly string _pythonToolsDir;
+      // Record local timestamp
+      LastUpdated = DateTime.Now.ToString("g");
 
-        public GraphService(IGraphDataRepo repo, IWebHostEnvironment env)
-        {
-            _repo = repo;
-
-            // Ensure the project wwwroot/charts directory exists
-            var chartsDir = Path.Combine(env.ContentRootPath, "wwwroot", "charts");
-            Directory.CreateDirectory(chartsDir);
-
-            // Full path to the output PNG in project wwwroot
-            _chartFile = Path.Combine(chartsDir, "otc-product-types.png");
-
-            // PythonTools folder under project root
-            _pythonToolsDir = Path.Combine(env.ContentRootPath, "PythonTools");
-
-            Console.WriteLine($"[GRAPH SERVICE] Writing chart to: {_chartFile}");
-            Console.WriteLine($"[GRAPH SERVICE] PythonTools dir: {_pythonToolsDir}");
-        }
-
-        public async Task<byte[]> GetCachedChartAsync()
-        {
-            // Read the PNG bytes directly from the chart file
-            return await File.ReadAllBytesAsync(_chartFile);
-        }
-
-        public async Task RegenerateChartAsync()
-        {
-            // Fetch the OTC data and serialize to JSON for Python
-            var raw = await _repo.FetchOtcDataAsync(7);
-            var payload = JsonSerializer.Serialize(raw, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
-
-            // Launch Python to render the chart to stdout
-            var psi = new ProcessStartInfo
-            {
-                FileName = "python",
-                Arguments = "render.py",
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = _pythonToolsDir
-            };
-
-            using var proc = Process.Start(psi);
-            if (proc == null)
-                throw new InvalidOperationException("Unable to start Python process");
-
-            // Send JSON data to Python's stdin
-            await proc.StandardInput.WriteAsync(payload);
-            proc.StandardInput.Close();
-
-            // Read image bytes from Python's stdout
-            using var ms = new MemoryStream();
-            await proc.StandardOutput.BaseStream.CopyToAsync(ms);
-
-            // Capture any Python errors
-            var error = await proc.StandardError.ReadToEndAsync();
-            if (!string.IsNullOrWhiteSpace(error))
-                Console.WriteLine("[PYTHON ERROR] " + error);
-
-            await proc.WaitForExitAsync();
-
-            // Write the PNG file to project wwwroot/charts
-            await File.WriteAllBytesAsync(_chartFile, ms.ToArray());
-        }
+      // Hit the image again with new ts to bust cache
+      UpdateChartUrl();
     }
+    else
+    {
+      // Optionally handle failure
+      LastUpdated = $"Refresh failed ({(int)resp.StatusCode})";
+    }
+
+    _loading = false;
+    StateHasChanged();
+  }
 }
