@@ -1,49 +1,228 @@
-Perfect — here's your **fully working version of `GraphBox.razor`** that we confirmed earlier, **without timestamp or last-updated logic**, but **refresh works and the graph updates** when the Python script regenerates the PNG file:
-
----
-
-### `GraphBox.razor`
-
-```razor
-@inject HttpClient Http
-@inject NavigationManager Nav
-
-<div class="card mb-3">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <strong>@Title</strong>
-        <button class="btn btn-sm btn-outline-primary" @onclick="RefreshAsync">Regenerate Graph</button>
-    </div>
-    <div class="card-body text-center">
-        <img src="@Src" alt="@Title" class="img-fluid" />
-    </div>
-</div>
-
-@code {
-    [Parameter] public string Title { get; set; } = string.Empty;
-    [Parameter] public string Src { get; set; } = string.Empty;
-    [Parameter] public string RefreshEndpoint { get; set; } = string.Empty;
-
-    private async Task RefreshAsync()
+// Models/ProductTradeCount.cs
+namespace StarTrends.Models
+{
+    public class ProductTradeCount
     {
-        await Http.GetAsync(RefreshEndpoint);
-        StateHasChanged(); // Manually refresh if needed
+        public string ProductTypeName { get; set; }
+        public int TotalTrades { get; set; }
     }
 }
-```
 
----
+// Services/IOracleDataService.cs
+using StarTrends.Models;
 
-### Example usage in `Home.razor`:
+namespace StarTrends.Services
+{
+    public interface IOracleDataService
+    {
+        Task<IEnumerable<ProductTradeCount>> GetProductTradeCountsAsync(DateTime fromDate);
+    }
+}
 
-```razor
-<GraphBox 
-    Title="OTC Product Types (Last 7 days)" 
-    Src="charts/otc-product-types.png" 
-    RefreshEndpoint="api/graphs/refresh-otc-chart" />
-```
+// Services/OracleDataService.cs
+using Oracle.ManagedDataAccess.Client;
+using Microsoft.Extensions.Configuration;
+using StarTrends.Models;
 
----
+namespace StarTrends.Services
+{
+    public class OracleDataService : IOracleDataService
+    {
+        private readonly string _connectionString;
 
-This is **clean, modular, and minimal**. You can now reuse `<GraphBox />` for all future charts too.
+        public OracleDataService(IConfiguration configuration)
+        {
+            _connectionString = configuration.GetConnectionString("OracleDb")
+                ?? throw new InvalidOperationException("OracleDb connection string not found.");
+        }
 
-Want me to extend this with a small loading spinner or toast on regenerate later?
+        public async Task<IEnumerable<ProductTradeCount>> GetProductTradeCountsAsync(DateTime fromDate)
+        {
+            var results = new List<ProductTradeCount>();
+            var query = @"
+SELECT c.prd_typ_name, COUNT(c.prd_typ_name) AS total_trades
+FROM star_workflow w
+JOIN (
+    SELECT a.*, 
+        CASE
+            WHEN a.prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
+            WHEN a.prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
+            WHEN a.prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
+            WHEN a.prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
+            WHEN a.prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
+            WHEN a.prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
+            WHEN a.prd_typ_cod = 'FRA' THEN 'FRA'
+            WHEN a.prd_typ_cod = 'CAP' THEN 'Cap'
+            WHEN a.prd_typ_cod = 'FLR' THEN 'Floor'
+            WHEN a.prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
+            WHEN a.prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
+            WHEN a.prd_typ_cod = 'OSP' THEN 'Swaption Pay'
+            WHEN a.prd_typ_cod = 'OSR' THEN 'Swaption Rec'
+            WHEN a.prd_typ_cod = 'OSS' THEN 'Swaption Strad'
+            WHEN a.prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
+            WHEN a.prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
+            WHEN a.prd_typ_cod = 'CSH' THEN 'Cashflow'
+            WHEN a.prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
+            WHEN a.prd_typ_cod = 'BME' THEN 'Container BME'
+            WHEN a.prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
+            WHEN a.prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
+            WHEN a.prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
+            ELSE a.prd_typ_cod
+        END AS prd_typ_name
+    FROM star_contract PARTITION(product_oth) a
+) c ON c.con_no = w.con_no
+WHERE inp_dt > :fromDate
+  AND c.mrr_typ_cod IN (0, 1, 6)
+GROUP BY c.prd_typ_name
+ORDER BY total_trades DESC";
+            try
+            {
+                using var connection = new OracleConnection(_connectionString);
+                await connection.OpenAsync();
+                using var command = new OracleCommand(query, connection);
+                command.Parameters.Add(new OracleParameter("fromDate", fromDate));
+
+                using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    results.Add(new ProductTradeCount
+                    {
+                        ProductTypeName = reader.GetString(0),
+                        TotalTrades = reader.GetInt32(1)
+                    });
+                }
+            }
+            catch (OracleException ex)
+            {
+                // TODO: log and handle error appropriately
+                throw;
+            }
+
+            return results;
+        }
+    }
+}
+
+// Services/IChartGeneratorService.cs
+namespace StarTrends.Services
+{
+    public interface IChartGeneratorService
+    {
+        Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data);
+    }
+}
+
+// Services/ChartGeneratorService.cs
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using StarTrends.Models;
+
+namespace StarTrends.Services
+{
+    public class ChartGeneratorService : IChartGeneratorService
+    {
+        private readonly ILogger<ChartGeneratorService> _logger;
+        private readonly string _scriptsFolder;
+        private readonly string _chartsFolder;
+
+        public ChartGeneratorService(ILogger<ChartGeneratorService> logger, IConfiguration config)
+        {
+            _logger = logger;
+            _scriptsFolder = config["ChartScriptsPath"] ?? "PythonScripts";
+            _chartsFolder = config["ChartsOutputPath"] ?? "wwwroot/charts";
+        }
+
+        public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
+        {
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var outputFile = Path.Combine(_chartsFolder, $"product_trades_{timestamp}.png");
+            var inputCsv = Path.Combine(_scriptsFolder, $"product_trades_{timestamp}.csv");
+
+            // write CSV
+            using (var writer = new StreamWriter(inputCsv))
+            {
+                writer.WriteLine("ProductTypeName,TotalTrades");
+                foreach (var item in data)
+                    await writer.WriteLineAsync($"{item.ProductTypeName},{item.TotalTrades}");
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "python",
+                Arguments = $"{Path.Combine(_scriptsFolder, "generate_product_trade_chart.py")} \"{inputCsv}\" \"{outputFile}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+
+            var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start Python process.");
+            var stderr = await process.StandardError.ReadToEndAsync();
+            if (!string.IsNullOrEmpty(stderr))
+                _logger.LogError(stderr);
+
+            await process.WaitForExitAsync();
+
+            return $"/charts/{Path.GetFileName(outputFile)}";
+        }
+    }
+}
+
+# Scripts/generate_product_trade_chart.py
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(input_csv, output_png):
+    df = pd.read_csv(input_csv)
+    plt.figure(figsize=(10, 6))
+    plt.bar(df['ProductTypeName'], df['TotalTrades'])
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(output_png)
+    plt.close()
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("Usage: python generate_product_trade_chart.py <input_csv> <output_png>")
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+
+// Program.cs additions
+builder.Services.AddScoped<IOracleDataService, OracleDataService>();
+builder.Services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
+
+# Pages/ProductTradeChart.razor
+@page "/product-trade-chart"
+@inject IOracleDataService OracleService
+@inject IChartGeneratorService ChartService
+
+<h3>Product Trades in Last 7 Days</h3>
+<button @onclick="GenerateChart">Refresh Chart</button>
+
+@if (loading)
+{
+    <p>Loading...</p>
+}
+else if (!string.IsNullOrEmpty(chartUrl))
+{
+    <img src="@chartUrl" alt="Product Trades Chart" />
+}
+
+@code {
+    private string chartUrl;
+    private bool loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await GenerateChart();
+    }
+
+    private async Task GenerateChart()
+    {
+        loading = true;
+        var fromDate = DateTime.Now.AddDays(-7);
+        var data = await OracleService.GetProductTradeCountsAsync(fromDate);
+        chartUrl = await ChartService.GenerateProductTradeChartAsync(data);
+        loading = false;
+    }
+}
