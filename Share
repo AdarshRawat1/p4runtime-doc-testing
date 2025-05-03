@@ -1,165 +1,57 @@
-**Addressing modular setup**
+@using Microsoft.AspNetCore.Components
+@inject HttpClient Http
+@inject NavigationManager Nav
 
-It seems like the user is displeased with the removal of the IGraphService interface and the lack of modularity. To address this, I'll focus on acknowledging that oversight and propose restoring the interface.
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <strong>@Title</strong>
+    <button class="btn btn-sm btn-outline-primary" @onclick="RefreshAsync" disabled="@_loading">
+      @if (_loading)
+      {
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        <span class="visually-hidden">Loading...</span>
+      }
+      else
+      {
+        ↻
+      }
+    </button>
+  </div>
+  <div class="card-body text-center">
+    <img src="@_chartUrl" alt="@Title" class="img-fluid" />
+  </div>
+</div>
 
-I'll define the IGraphService with relevant methods (GetCachedChartAsync and RegenerateChartAsync), update GraphService to benefit from the interface, and examine how to properly inject IGraphService into GraphBox. Since GraphBox is a Razor component, I'll ensure I explore the appropriate way to tie these elements together.
+@code {
+  [Parameter] public string Title { get; set; } = string.Empty;
+  [Parameter] public string Src { get; set; } = string.Empty;
+  [Parameter] public string RefreshEndpoint { get; set; } = string.Empty;
 
+  private bool _loading;
+  private long _ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+  private string _chartUrl => $"{Nav.BaseUri}{Src}?ts={_ts}";
 
-Thought for 6 seconds
+  private async Task RefreshAsync()
+  {
+    _loading = true;
+    StateHasChanged();
 
+    await Http.GetAsync(RefreshEndpoint);
+    _ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-You’re absolutely right—I slipped on modularity when I ripped out the interface. Let’s restore our clean layering:
-
----
-
-## 1) Add back **IGraphService**
-
-```csharp
-// Services/IGraphService.cs
-
-using System.Threading.Tasks;
-
-namespace StarTrends.Services
-{
-    public interface IGraphService
-    {
-        /// <summary>
-        /// Returns the bytes of the last‐generated chart PNG.
-        /// </summary>
-        Task<byte[]> GetCachedChartAsync();
-
-        /// <summary>
-        /// Regenerates the chart (runs Python) and writes it to disk.
-        /// </summary>
-        Task RegenerateChartAsync();
-    }
+    _loading = false;
+    StateHasChanged();
+  }
 }
-```
 
----
 
-## 2) Update **GraphService** to implement it
 
-```csharp
-// Services/GraphService.cs
 
-using System.Diagnostics;
-using System.IO;
-using System.Text.Json;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Hosting;
-using StarTrends.Data;
 
-namespace StarTrends.Services
-{
-    public class GraphService : IGraphService
-    {
-        private readonly IGraphDataRepo _repo;
-        private readonly string         _chartPath;
-        private readonly string         _pythonDir;
 
-        public GraphService(IGraphDataRepo repo, IWebHostEnvironment env)
-        {
-            _repo     = repo;
-            var charts = Path.Combine(env.WebRootPath, "charts");
-            Directory.CreateDirectory(charts);
-            _chartPath = Path.Combine(charts, "otc-product-types.png");
-            _pythonDir = Path.Combine(env.ContentRootPath, "PythonTools");
-        }
 
-        public async Task<byte[]> GetCachedChartAsync()
-        {
-            // ensure it exists
-            if (!File.Exists(_chartPath))
-                await RegenerateChartAsync();
-            return await File.ReadAllBytesAsync(_chartPath);
-        }
-
-        public async Task RegenerateChartAsync()
-        {
-            var raw     = await _repo.FetchOtcDataAsync(7);
-            var payload = JsonSerializer.Serialize(raw, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
-
-            var psi = new ProcessStartInfo("python", "render.py")
-            {
-                RedirectStandardInput  = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError  = true,
-                UseShellExecute        = false,
-                CreateNoWindow         = true,
-                WorkingDirectory       = _pythonDir
-            };
-
-            using var proc = Process.Start(psi)!;
-            await proc.StandardInput.WriteAsync(payload);
-            proc.StandardInput.Close();
-
-            using var ms = new MemoryStream();
-            await proc.StandardOutput.BaseStream.CopyToAsync(ms);
-            await proc.WaitForExitAsync();
-
-            await File.WriteAllBytesAsync(_chartPath, ms.ToArray());
-        }
-    }
-}
-```
-
----
-
-## 3) Wire up the interface in **Program.cs**
-
-```csharp
-builder.Services.AddScoped<IGraphDataRepo, OracleDataRepo>();
-builder.Services.AddScoped<IGraphService, GraphService>();
-```
-
----
-
-## 4) Keep your **GraphController** using the interface
-
-```csharp
-[ApiController]
-[Route("api/graphs")]
-public class GraphController : ControllerBase
-{
-    private readonly IGraphService _svc;
-    public GraphController(IGraphService svc) => _svc = svc;
-
-    [HttpGet("otc-product-types")]
-    public async Task<IActionResult> Get()
-    {
-        var png = await _svc.GetCachedChartAsync();
-        return File(png, "image/png");
-    }
-
-    [HttpGet("refresh-otc-chart")]
-    public async Task<IActionResult> Refresh()
-    {
-        await _svc.RegenerateChartAsync();
-        return Ok();
-    }
-}
-```
-
----
-
-## 5) Your UI component stays the same
-
-```razor
 <GraphBox
   Title="OTC Product Types (last 7 days)"
   Src="charts/otc-product-types.png"
   RefreshEndpoint="api/graphs/refresh-otc-chart" />
-```
 
-This brings back our clean, modular structure:
-
-* **IGraphService** hides implementation details
-* **GraphService** implements it (and still lives in Services/)
-* **GraphController** depends on the interface
-* **UI** components consume only the public API paths
-
-Now you can spin up as many graphs as you like, all following the same pattern. Let me know if you need anything else!
