@@ -1,7 +1,49 @@
-// DO NOT BLOCK MAIN THREAD
-Task.Run(async () =>
-{
-    using var scope = app.Services.CreateScope();
-    var svc = scope.ServiceProvider.GetRequiredService<IGraphService>();
-    await svc.RegenerateChartAsync();
-});
+Perfect — here's your **fully working version of `GraphBox.razor`** that we confirmed earlier, **without timestamp or last-updated logic**, but **refresh works and the graph updates** when the Python script regenerates the PNG file:
+
+---
+
+### `GraphBox.razor`
+
+```razor
+@inject HttpClient Http
+@inject NavigationManager Nav
+
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>@Title</strong>
+        <button class="btn btn-sm btn-outline-primary" @onclick="RefreshAsync">Regenerate Graph</button>
+    </div>
+    <div class="card-body text-center">
+        <img src="@Src" alt="@Title" class="img-fluid" />
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string Src { get; set; } = string.Empty;
+    [Parameter] public string RefreshEndpoint { get; set; } = string.Empty;
+
+    private async Task RefreshAsync()
+    {
+        await Http.GetAsync(RefreshEndpoint);
+        StateHasChanged(); // Manually refresh if needed
+    }
+}
+```
+
+---
+
+### Example usage in `Home.razor`:
+
+```razor
+<GraphBox 
+    Title="OTC Product Types (Last 7 days)" 
+    Src="charts/otc-product-types.png" 
+    RefreshEndpoint="api/graphs/refresh-otc-chart" />
+```
+
+---
+
+This is **clean, modular, and minimal**. You can now reuse `<GraphBox />` for all future charts too.
+
+Want me to extend this with a small loading spinner or toast on regenerate later?
