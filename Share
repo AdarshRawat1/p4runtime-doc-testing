@@ -1,21 +1,71 @@
-**Diagnosing image issue**
+**Reverting to earlier configuration**
 
-The user mentions they're not getting an image even when hitting the endpoint manually. It seems like they might still be using the '/api/graphs/otc-product-types' endpoint, not the correct '/api/graphs/otc-chart'. I need to suggest checking if the endpoints are properly replaced. The 'GraphController.cs' code may need updating: it looks like they haven't yet replaced the old endpoints with the new '/otc-chart' route. I’ll confirm if both the URL and controller code align with the new setup.
+The user wants to restore the earlier working state where a static PNG image was displayed on the page. They need the config to remove later changes and return to the original setup. This includes the Program.cs, ChartViewer.razor, and GraphController/GraphService modifications that worked. The initial setup had **GraphController** serving the PNG via an endpoint (`Get` returned a file) and **ChartViewer** rendering the image via an HTTP call fetching the PNG image directly as a base64 string.
+
+**Reconstructing the earlier setup**
+
+The user wants to return to a previous working setup where a Python script wrote the chart image to the `wwwroot/charts` folder and displayed it instantly via an `<img>` tag. A refresh button triggered an update by calling the refresh endpoint, which regenerated the chart and added a timestamp. To restore that state, the steps involve:
+
+* Configuring `Program.cs` with necessary routes and services.
+* Setting up `GraphController` with endpoints for fetching the chart and refreshing it.
+* Ensuring `GraphService` can regenerate the chart and serve it from `wwwroot/charts`.
+* Rebuilding `ChartViewer.razor` with the correct setup for displaying and refreshing the chart.
+
+**Restoring to the earlier image rendering state**
+
+To meet the user's request for the working state where only one image is rendered, we can simplify the setup like this:
+
+* **Program.cs**: Adjusted to only include essentials, with `UseStaticFiles` and `MapControllers` right after setting up services.
+* **GraphController.cs**: Retain the `/otc-product-types` endpoint to serve cached charts and keep the refresh endpoint (`/refresh-otc-chart`), though no refresh functionality is needed for now.
+* **ChartViewer.razor**: Set up to fetch the chart as a base64 string on page load (`OnInitializedAsync`), displaying it as a single image with no refresh button.
+
+This will give the user the required setup with just the static image.
 
 
-Thought for 6 seconds
+Thought for 15 seconds
 
 
-Let’s drill in and make sure the *same* single endpoint is both regenerating and serving the PNG, and that you’re calling it by the *exact* URL it lives on.
+Below is the *exact* minimum set of files you need to roll back to the last known working state—one PNG rendered on page‐load, no refresh button, no cache‐busting, no timestamps. Just a single `<img>` fed by your API:
 
 ---
 
-## 1) Replace your two‐action controller with one unified action
-
-Open **GraphController.cs** and replace its contents with this:
+### 1) `Program.cs`
 
 ```csharp
-using System.Threading.Tasks;
+var builder = WebApplication.CreateBuilder(args);
+
+// register your chart service and repo
+builder.Services.AddControllers();
+builder.Services.AddScoped<IGraphDataRepo, OracleDataRepo>();
+builder.Services.AddScoped<IGraphService, GraphService>();
+
+// HTTP client (if you ever need it)
+builder.Services.AddHttpClient();
+
+// Blazor Server
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+
+var app = builder.Build();
+
+// standard middleware
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+app.UseRouting();
+
+// map the API and Blazor endpoints
+app.MapControllers();
+app.MapBlazorHub();
+app.MapFallbackToPage("/_Host");
+
+app.Run();
+```
+
+---
+
+### 2) `Controllers/GraphController.cs`
+
+```csharp
 using Microsoft.AspNetCore.Mvc;
 using StarTrends.Services;
 
@@ -28,104 +78,121 @@ namespace StarTrends.Controllers
         private readonly IGraphService _svc;
         public GraphController(IGraphService svc) => _svc = svc;
 
-        /// <summary>
-        /// GET api/graphs/otc-chart?refresh=true
-        /// If refresh=true, re‐runs Python. Always returns the PNG.
-        /// </summary>
-        [HttpGet("otc-chart")]
-        public async Task<IActionResult> GetOtcChart([FromQuery] bool refresh = false)
+        // GET api/graphs/otc-product-types
+        [HttpGet("otc-product-types")]
+        public async Task<IActionResult> Get()
         {
-            if (refresh)
-            {
-                // regen the chart on disk or in memory
-                await _svc.RegenerateChartAsync();
-            }
+            var png = await _svc.GetCachedChartAsync();
+            return File(png, "image/png");
+        }
 
-            var img = await _svc.GetCachedChartAsync();
-            if (img == null || img.Length == 0)
-                return NotFound();
-            return File(img, "image/png");
+        // GET api/graphs/refresh-otc-chart
+        [HttpGet("refresh-otc-chart")]
+        public async Task<IActionResult> Refresh()
+        {
+            await _svc.RegenerateChartAsync();
+            return Ok();
         }
     }
 }
 ```
 
-**Key points:**
-
-* There is *only* one endpoint: **`GET /api/graphs/otc-chart`**
-* If you append `?refresh=true`, it will call your Python renderer first.
-* It then returns the raw PNG bytes with `Content-Type: image/png`.
-
 ---
 
-## 2) Wire your Blazor `<img>` to call that endpoint
+### 3) `Services/GraphService.cs`
 
-In **Shared/ChartViewer.razor**, use this:
+```csharp
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
+using StarTrends.Data;
 
-```razor
-@inject NavigationManager Nav
+namespace StarTrends.Services
+{
+    public class GraphService : IGraphService
+    {
+        private readonly IGraphDataRepo _repo;
+        private readonly string _chartPath;
 
-<div class="chart-container">
-  <img src="@_chartUrl" alt="OTC Chart" style="max-width:100%;" />
+        public GraphService(IGraphDataRepo repo, IWebHostEnvironment env)
+        {
+            _repo = repo;
 
-  <button class="btn btn-sm btn-outline-primary mt-2" @onclick="RefreshChart">
-    ↻ Refresh
-  </button>
-</div>
+            // ensure the folder exists
+            var chartsDir = Path.Combine(env.ContentRootPath, "wwwroot", "charts");
+            Directory.CreateDirectory(chartsDir);
 
-@code {
-  private string _chartUrl;
+            _chartPath = Path.Combine(chartsDir, "otc-product-types.png");
+        }
 
-  protected override void OnInitialized()
-  {
-    // initial load (no regen)
-    SetChartUrl(refresh: false);
-  }
+        public async Task<byte[]> GetCachedChartAsync()
+            => await File.ReadAllBytesAsync(_chartPath);
 
-  private void SetChartUrl(bool refresh)
-  {
-    // build the full URL, with cache‐buster
-    var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-    _chartUrl = $"{Nav.BaseUri}api/graphs/otc-chart?refresh={refresh}&ts={ts}";
-  }
+        public async Task RegenerateChartAsync()
+        {
+            // fetch your data
+            var raw = await _repo.FetchOtcDataAsync(7);
+            var payload = JsonSerializer.Serialize(raw, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
 
-  private Task RefreshChart()
-  {
-    // switch to refresh + new ts so browser re-fetches
-    SetChartUrl(refresh: true);
-    return Task.CompletedTask;
-  }
+            // run Python to get fresh PNG bytes
+            var psi = new ProcessStartInfo
+            {
+                FileName = "python",
+                Arguments = "render.py",
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.Combine(AppContext.BaseDirectory, "PythonTools")
+            };
+
+            using var proc = Process.Start(psi);
+            await proc.StandardInput.WriteAsync(payload);
+            proc.StandardInput.Close();
+
+            using var ms = new MemoryStream();
+            await proc.StandardOutput.BaseStream.CopyToAsync(ms);
+            await proc.WaitForExitAsync();
+
+            // overwrite the file on disk
+            await File.WriteAllBytesAsync(_chartPath, ms.ToArray());
+        }
+    }
 }
 ```
 
 ---
 
-## 3) Test it step by step
+### 4) `Shared/ChartViewer.razor`
 
-1. **Rebuild** and **run** your app.
-2. In your browser’s address bar, request:
+```razor
+@inject HttpClient Http
 
-   ```
-   https://localhost:7287/api/graphs/otc-chart
-   ```
+<img src="@($"data:image/png;base64,{_base64}")"
+     alt="OTC Product Types (last 7 days)"
+     style="max-width:100%;" />
 
-   You should see the PNG (even if stale).
-3. Now hit:
+@code {
+    private string _base64;
 
-   ```
-   https://localhost:7287/api/graphs/otc-chart?refresh=true
-   ```
-
-   —this should trigger your Python renderer and return the *new* PNG immediately.
-
-Once those two URLs both return a valid image, your Blazor `<img>` will start showing it on page‐load and on “Refresh” clicks.
+    protected override async Task OnInitializedAsync()
+    {
+        // load the one chart on startup
+        var bytes = await Http.GetByteArrayAsync("api/graphs/otc-product-types");
+        _base64 = Convert.ToBase64String(bytes);
+    }
+}
+```
 
 ---
 
-### If you still get **404** or an empty response:
+1. Copy these four files *exactly* into your project, replacing whatever you currently have.
+2. Run `dotnet clean && dotnet run`.
+3. Navigate to `/` and you should see **one** chart rendered immediately on page load.
 
-* **Double‐check** that you have **`builder.Services.AddControllers()`** and **`app.MapControllers()`** in `Program.cs`, *before* your Blazor endpoints.
-* Make sure you’re calling **`/api/graphs/otc-chart`** exactly (no typos).
-* Use your browser’s *Network* tab or a tool like `curl -v` to inspect the raw response—status code, content‐type, response body size.
-
-With this single‐endpoint pattern in place, you’ll have 100% control over regeneration and delivery of the chart. Let me know what you see when you hit `/api/graphs/otc-chart?refresh=true` directly!
+This brings you right back to the last known working state.
