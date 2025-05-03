@@ -1,29 +1,143 @@
-**Identifying HttpClient issue**
+**Investigating server error**
 
-The user encountered an "InvalidOperationException" when trying to use a relative URL in Blazor. This likely happened because the `HttpClient` BaseAddress isn't set, which is required for relative URLs. In Blazor Server, this BaseAddress needs to be configured manually in Program.cs using `AddHttpClient`. On the other hand, Blazor WebAssembly auto-configures the BaseAddress. To fix it, they'll need to configure their `HttpClient` in Blazor Server by setting it properly in the service configuration.
+The user tried accessing an image but faced a 500 error, meaning something went wrong on the server side. Their attempt to use base64 inline failed, possibly due to an incorrect file path or missing file. The service tried to read from `wwwroot/charts/`, so I'll check if the file exists or if the path’s wrong. I’m suggesting using `IWebHostEnvironment` to build a clear, absolute path, verifying file presence, and improving error logging. The goal is to get the image to render properly while simplifying the process.
 
-**Resolving HttpClient BaseAddress issue**
+**Fixing image rendering issue**
 
-When using relative URLs like "api/...", an "invalid request URI" error occurs if the `HttpClient`'s `BaseAddress` isn't set. To fix this, the BaseAddress can be specified in `Program.cs`. In Blazor Server, use `builder.Services.AddHttpClient<HttpClient>(client => client.BaseAddress = new Uri(builder.HostEnvironment.BaseAddress));`, or for a direct URL, inject `NavigationManager` to build an absolute path. Alternatively, set the HTTP client's BaseAddress directly to ensure accuracy when making requests.
-
-
-Thought for 8 seconds
+The user encountered a 500 error when trying to load an image after attempting to use inline base64. The error throws from `ChartViewer.OnInitializedAsync`. We should start by fixing the endpoint to handle errors better and ensure that the controller catches missing files. A good next step would be to test the endpoint manually via the browser to see if the issue lies with the endpoint itself, then use a simpler `<img src="...">` approach in Home.razor to bypass HttpClient and avoid exceptions altogether.
 
 
-Here’s the *one-image* setup you had working, with just a tiny tweak so you won’t get that “invalid URI” error. We’re going back to exactly what rendered for you before, but now we build an **absolute** URL for HttpClient.
+Thought for 7 seconds
+
+
+Okay, let’s rip everything back to the single, simplest “one‐image” flow that we know worked before:
+
+1. **Your service** reads a PNG off disk (and will auto‐generate it if missing).
+2. **Your controller** just returns that PNG at `GET /api/graphs/otc-product-types`.
+3. **Your Blazor page** uses a plain `<img src="…">` pointing at that API—no HttpClient, no base64, no extra logic.
 
 ---
 
-### 1) `Program.cs` (no changes from your last working)
+## 1) GraphService: ensure the file & folder exist
 
 ```csharp
+// Services/GraphService.cs
+
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Hosting;
+using StarTrends.Data;
+
+namespace StarTrends.Services
+{
+    public class GraphService : IGraphService
+    {
+        private readonly IGraphDataRepo _repo;
+        private readonly string         _chartPath;
+
+        public GraphService(IGraphDataRepo repo, IWebHostEnvironment env)
+        {
+            _repo = repo;
+
+            // wwwroot/charts
+            var chartsDir = Path.Combine(env.WebRootPath, "charts");
+            Directory.CreateDirectory(chartsDir);
+
+            // full path to the PNG
+            _chartPath = Path.Combine(chartsDir, "otc-product-types.png");
+        }
+
+        public async Task<byte[]> GetCachedChartAsync()
+        {
+            // if it doesn't exist yet, regenerate once
+            if (!File.Exists(_chartPath))
+                await RegenerateChartAsync();
+
+            return await File.ReadAllBytesAsync(_chartPath);
+        }
+
+        public async Task RegenerateChartAsync()
+        {
+            var raw = await _repo.FetchOtcDataAsync(7);
+            var payload = JsonSerializer.Serialize(raw, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+
+            var psi = new ProcessStartInfo
+            {
+                FileName              = "python",
+                Arguments             = "render.py",
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute       = false,
+                CreateNoWindow        = true,
+                WorkingDirectory      = Path.Combine(AppContext.BaseDirectory, "PythonTools")
+            };
+
+            using var proc = Process.Start(psi)!;
+            await proc.StandardInput.WriteAsync(payload);
+            proc.StandardInput.Close();
+
+            using var ms = new MemoryStream();
+            await proc.StandardOutput.BaseStream.CopyToAsync(ms);
+            await proc.WaitForExitAsync();
+
+            var bytes = ms.ToArray();
+            await File.WriteAllBytesAsync(_chartPath, bytes);
+        }
+    }
+}
+```
+
+---
+
+## 2) GraphController: one single action
+
+```csharp
+// Controllers/GraphController.cs
+
+using Microsoft.AspNetCore.Mvc;
+using StarTrends.Services;
+
+namespace StarTrends.Controllers
+{
+    [ApiController]
+    [Route("api/graphs")]
+    public class GraphController : ControllerBase
+    {
+        private readonly IGraphService _svc;
+        public GraphController(IGraphService svc) => _svc = svc;
+
+        // GET api/graphs/otc-product-types
+        [HttpGet("otc-product-types")]
+        public async Task<IActionResult> Get()
+        {
+            var img = await _svc.GetCachedChartAsync();
+            if (img == null || img.Length == 0)
+                return NotFound();
+            return File(img, "image/png");
+        }
+    }
+}
+```
+
+---
+
+## 3) Program.cs: register & map controllers
+
+```csharp
+// Program.cs
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddScoped<IGraphDataRepo, OracleDataRepo>();
 builder.Services.AddScoped<IGraphService, GraphService>();
-
-// we’ll use HttpClient in the component, so just register the default
 builder.Services.AddHttpClient();
 
 builder.Services.AddRazorPages();
@@ -44,77 +158,28 @@ app.Run();
 
 ---
 
-### 2) `GraphController.cs` (serve the cached PNG only)
+## 4) Your Blazor page: simple `<img>`
 
-```csharp
-using Microsoft.AspNetCore.Mvc;
-using StarTrends.Services;
-
-namespace StarTrends.Controllers
-{
-    [ApiController]
-    [Route("api/graphs")]
-    public class GraphController : ControllerBase
-    {
-        private readonly IGraphService _svc;
-        public GraphController(IGraphService svc) => _svc = svc;
-
-        [HttpGet("otc-product-types")]
-        public async Task<IActionResult> Get()
-        {
-            var png = await _svc.GetCachedChartAsync();
-            return File(png, "image/png");
-        }
-    }
-}
-```
-
----
-
-### 3) `GraphService.cs` (exactly as before)
-
-Make sure you have your `RegenerateChartAsync()` already run *once* (so the file exists), then you only need:
-
-```csharp
-public async Task<byte[]> GetCachedChartAsync()
-{
-    var path = Path.Combine(AppContext.BaseDirectory, "wwwroot", "charts", "otc-product-types.png");
-    return await File.ReadAllBytesAsync(path);
-}
-```
-
----
-
-### 4) **Updated** `Shared/ChartViewer.razor`
+Open **Pages/Home.razor** (or wherever you want the chart) and use:
 
 ```razor
-@inject HttpClient Http
-@inject NavigationManager Nav
+@page "/"
+<h3>OTC Product Types (last 7 days)</h3>
 
-<img src="@($"data:image/png;base64,{_base64}")"
-     alt="OTC Product Types"
-     style="max-width:100%;" />
-
-@code {
-    private string _base64 = "";
-
-    protected override async Task OnInitializedAsync()
-    {
-        // build absolute URL so HttpClient has a BaseAddress it can use
-        var url = $"{Nav.BaseUri}api/graphs/otc-product-types";
-
-        // fetch the raw bytes
-        var bytes = await Http.GetByteArrayAsync(url);
-
-        // convert to inline base64 PNG
-        _base64 = Convert.ToBase64String(bytes);
-    }
-}
+<img src="api/graphs/otc-product-types"
+     alt="OTC Chart"
+     style="max-width:100%; border:1px solid #ccc;" />
 ```
 
-**Why this fixes the URI error**
+No HttpClient, no base64 conversion—just a normal `<img>` whose `src` is your API endpoint.
 
-* By concatenating `Nav.BaseUri` (which is your app’s origin + “/”) to the API path, you give `Http.GetByteArrayAsync` an **absolute** URI.
-* You’ll once again get exactly one chart, rendered as an inline `<img>` in your Blazor page.
+---
 
-Drop *only* those four files in, rebuild, and you should see your single chart come back.
+### How to test
+
+1. **Rebuild & run** your app.
+2. In your browser, hit **[https://localhost:7287/](https://localhost:7287/)**.
+3. You should see exactly one chart image.
+4. If it’s blank or 404, go to **[https://localhost:7287/api/graphs/otc-product-types](https://localhost:7287/api/graphs/otc-product-types)** directly—*that* URL must return the PNG.
+
+Once that’s green—one image on the page, no errors—you’ll have your “last known working” state back. From there, we can re‐introduce “Refresh” buttons or cache‐busters one piece at a time.
