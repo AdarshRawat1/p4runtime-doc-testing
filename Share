@@ -1,120 +1,22 @@
-// Models/ProductTradeCount.cs
-namespace StarTrends.Models
-{
-    public class ProductTradeCount
-    {
-        public string ProductTypeName { get; set; }
-        public int TotalTrades { get; set; }
-    }
-}
+**Implementing CSV approach**
 
-// Services/IOracleDataService.cs
-using StarTrends.Models;
+The user is happy with the CSV solution, as it allows regular updates via a script. I should now update the service code to reflect this preference, ensuring the auto folder creation and directory paths are properly set. In the chart generator service, I’ll generate the CSV, then trigger the Python script to produce the chart. I'll also need to update the ChartGeneratorService to handle directory setup and absolute paths based on this approach. Time to adjust the code!
 
-namespace StarTrends.Services
-{
-    public interface IOracleDataService
-    {
-        Task<IEnumerable<ProductTradeCount>> GetProductTradeCountsAsync(DateTime fromDate);
-    }
-}
 
-// Services/OracleDataService.cs
-using Oracle.ManagedDataAccess.Client;
-using Microsoft.Extensions.Configuration;
-using StarTrends.Models;
+Thought for 7 seconds
 
-namespace StarTrends.Services
-{
-    public class OracleDataService : IOracleDataService
-    {
-        private readonly string _connectionString;
 
-        public OracleDataService(IConfiguration configuration)
-        {
-            _connectionString = configuration.GetConnectionString("OracleDb")
-                ?? throw new InvalidOperationException("OracleDb connection string not found.");
-        }
+Perfect—let’s keep the CSV-based pipeline so you can reuse or refresh the CSV as needed. Below is the updated **ChartGeneratorService** that:
 
-        public async Task<IEnumerable<ProductTradeCount>> GetProductTradeCountsAsync(DateTime fromDate)
-        {
-            var results = new List<ProductTradeCount>();
-            var query = @"
-SELECT c.prd_typ_name, COUNT(c.prd_typ_name) AS total_trades
-FROM star_workflow w
-JOIN (
-    SELECT a.*, 
-        CASE
-            WHEN a.prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
-            WHEN a.prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
-            WHEN a.prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
-            WHEN a.prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
-            WHEN a.prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
-            WHEN a.prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
-            WHEN a.prd_typ_cod = 'FRA' THEN 'FRA'
-            WHEN a.prd_typ_cod = 'CAP' THEN 'Cap'
-            WHEN a.prd_typ_cod = 'FLR' THEN 'Floor'
-            WHEN a.prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
-            WHEN a.prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
-            WHEN a.prd_typ_cod = 'OSP' THEN 'Swaption Pay'
-            WHEN a.prd_typ_cod = 'OSR' THEN 'Swaption Rec'
-            WHEN a.prd_typ_cod = 'OSS' THEN 'Swaption Strad'
-            WHEN a.prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
-            WHEN a.prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
-            WHEN a.prd_typ_cod = 'CSH' THEN 'Cashflow'
-            WHEN a.prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
-            WHEN a.prd_typ_cod = 'BME' THEN 'Container BME'
-            WHEN a.prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
-            WHEN a.prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
-            WHEN a.prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
-            ELSE a.prd_typ_cod
-        END AS prd_typ_name
-    FROM star_contract PARTITION(product_oth) a
-) c ON c.con_no = w.con_no
-WHERE inp_dt > :fromDate
-  AND c.mrr_typ_cod IN (0, 1, 6)
-GROUP BY c.prd_typ_name
-ORDER BY total_trades DESC";
-            try
-            {
-                using var connection = new OracleConnection(_connectionString);
-                await connection.OpenAsync();
-                using var command = new OracleCommand(query, connection);
-                command.Parameters.Add(new OracleParameter("fromDate", fromDate));
+1. Ensures the folders exist
+2. Writes a timestamped CSV of your `ProductTradeCount` data
+3. Calls the Python script to read that CSV and produce a PNG
 
-                using var reader = await command.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    results.Add(new ProductTradeCount
-                    {
-                        ProductTypeName = reader.GetString(0),
-                        TotalTrades = reader.GetInt32(1)
-                    });
-                }
-            }
-            catch (OracleException ex)
-            {
-                // TODO: log and handle error appropriately
-                throw;
-            }
-
-            return results;
-        }
-    }
-}
-
-// Services/IChartGeneratorService.cs
-namespace StarTrends.Services
-{
-    public interface IChartGeneratorService
-    {
-        Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data);
-    }
-}
-
-// Services/ChartGeneratorService.cs
+```csharp
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Hosting;
 using StarTrends.Models;
 
 namespace StarTrends.Services
@@ -125,49 +27,73 @@ namespace StarTrends.Services
         private readonly string _scriptsFolder;
         private readonly string _chartsFolder;
 
-        public ChartGeneratorService(ILogger<ChartGeneratorService> logger, IConfiguration config)
+        public ChartGeneratorService(
+            ILogger<ChartGeneratorService> logger,
+            IConfiguration config,
+            IWebHostEnvironment env)
         {
-            _logger = logger;
-            _scriptsFolder = config["ChartScriptsPath"] ?? "PythonScripts";
-            _chartsFolder = config["ChartsOutputPath"] ?? "wwwroot/charts";
+            _logger      = logger;
+
+            // Application root\PythonScripts
+            _scriptsFolder = Path.Combine(
+                env.ContentRootPath,
+                config["ChartScriptsPath"] ?? "PythonScripts");
+
+            // wwwroot\charts
+            _chartsFolder = Path.Combine(
+                env.WebRootPath,
+                config["ChartsOutputPath"] ?? "charts");
+
+            // Create directories if missing
+            Directory.CreateDirectory(_scriptsFolder);
+            Directory.CreateDirectory(_chartsFolder);
         }
 
         public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
         {
-            var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-            var outputFile = Path.Combine(_chartsFolder, $"product_trades_{timestamp}.png");
-            var inputCsv = Path.Combine(_scriptsFolder, $"product_trades_{timestamp}.csv");
+            // Prepare timestamped file names
+            var timestamp  = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var csvPath    = Path.Combine(_scriptsFolder, $"product_trades_{timestamp}.csv");
+            var pngPath    = Path.Combine(_chartsFolder, $"product_trades_{timestamp}.png");
 
-            // write CSV
-            using (var writer = new StreamWriter(inputCsv))
+            // 1) Write CSV
+            await using (var writer = new StreamWriter(csvPath))
             {
                 writer.WriteLine("ProductTypeName,TotalTrades");
                 foreach (var item in data)
                     await writer.WriteLineAsync($"{item.ProductTypeName},{item.TotalTrades}");
             }
 
+            // 2) Invoke Python script
+            var scriptFile = Path.Combine(_scriptsFolder, "generate_product_trade_chart.py");
             var psi = new ProcessStartInfo
             {
-                FileName = "python",
-                Arguments = $"{Path.Combine(_scriptsFolder, "generate_product_trade_chart.py")} \"{inputCsv}\" \"{outputFile}\"",
-                RedirectStandardOutput = true,
+                FileName            = "python",
+                Arguments           = $"\"{scriptFile}\" \"{csvPath}\" \"{pngPath}\"",
                 RedirectStandardError = true,
-                UseShellExecute = false
+                UseShellExecute     = false
             };
 
-            var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start Python process.");
-            var stderr = await process.StandardError.ReadToEndAsync();
-            if (!string.IsNullOrEmpty(stderr))
-                _logger.LogError(stderr);
+            using var proc = Process.Start(psi)
+                ?? throw new InvalidOperationException("Failed to launch Python process.");
+            var err = await proc.StandardError.ReadToEndAsync();
+            await proc.WaitForExitAsync();
 
-            await process.WaitForExitAsync();
+            if (!string.IsNullOrEmpty(err))
+                _logger.LogError("Python error: {Error}", err);
 
-            return $"/charts/{Path.GetFileName(outputFile)}";
+            // Return a URL path that Blazor can render
+            return $"/charts/{Path.GetFileName(pngPath)}";
         }
     }
 }
+```
 
-# Scripts/generate_product_trade_chart.py
+And your **Python script** remains the same:
+
+```python
+# PythonScripts/generate_product_trade_chart.py
+
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -183,46 +109,17 @@ def main(input_csv, output_png):
 
 if __name__ == '__main__':
     if len(sys.argv) != 3:
-        print("Usage: python generate_product_trade_chart.py <input_csv> <output_png>")
+        print("Usage: python generate_product_trade_chart.py <input_csv> <output_png>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
+```
 
-// Program.cs additions
-builder.Services.AddScoped<IOracleDataService, OracleDataService>();
-builder.Services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
+---
 
-# Pages/ProductTradeChart.razor
-@page "/product-trade-chart"
-@inject IOracleDataService OracleService
-@inject IChartGeneratorService ChartService
+### Next Steps
 
-<h3>Product Trades in Last 7 Days</h3>
-<button @onclick="GenerateChart">Refresh Chart</button>
+* **Populate** your `PythonScripts` folder with the above script and set it to copy to output.
+* **Create** a `charts` folder under **wwwroot** (or let the service auto-create it).
+* **Hit** your Blazor page’s “Refresh Chart” button to regenerate the CSV & PNG.
 
-@if (loading)
-{
-    <p>Loading...</p>
-}
-else if (!string.IsNullOrEmpty(chartUrl))
-{
-    <img src="@chartUrl" alt="Product Trades Chart" />
-}
-
-@code {
-    private string chartUrl;
-    private bool loading;
-
-    protected override async Task OnInitializedAsync()
-    {
-        await GenerateChart();
-    }
-
-    private async Task GenerateChart()
-    {
-        loading = true;
-        var fromDate = DateTime.Now.AddDays(-7);
-        var data = await OracleService.GetProductTradeCountsAsync(fromDate);
-        chartUrl = await ChartService.GenerateProductTradeChartAsync(data);
-        loading = false;
-    }
-}
+Since the CSV lives on disk, you can also set up a cron job or Windows Task to repopulate it on a schedule if you ever need to pre-warm data outside of user requests. Let me know if you want a sample scheduler snippet!
