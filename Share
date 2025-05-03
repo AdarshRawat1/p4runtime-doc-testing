@@ -1,13 +1,50 @@
-Thought for a couple of seconds
+**Identifying HttpClient issue**
+
+The user encountered an "InvalidOperationException" when trying to use a relative URL in Blazor. This likely happened because the `HttpClient` BaseAddress isn't set, which is required for relative URLs. In Blazor Server, this BaseAddress needs to be configured manually in Program.cs using `AddHttpClient`. On the other hand, Blazor WebAssembly auto-configures the BaseAddress. To fix it, they'll need to configure their `HttpClient` in Blazor Server by setting it properly in the service configuration.
+
+**Resolving HttpClient BaseAddress issue**
+
+When using relative URLs like "api/...", an "invalid request URI" error occurs if the `HttpClient`'s `BaseAddress` isn't set. To fix this, the BaseAddress can be specified in `Program.cs`. In Blazor Server, use `builder.Services.AddHttpClient<HttpClient>(client => client.BaseAddress = new Uri(builder.HostEnvironment.BaseAddress));`, or for a direct URL, inject `NavigationManager` to build an absolute path. Alternatively, set the HTTP client's BaseAddress directly to ensure accuracy when making requests.
 
 
-Let’s roll right back to “one PNG on load” and make sure your component is calling your controller with an *absolute* URI, so you never get that “invalid request URI” error.
+Thought for 8 seconds
+
+
+Here’s the *one-image* setup you had working, with just a tiny tweak so you won’t get that “invalid URI” error. We’re going back to exactly what rendered for you before, but now we build an **absolute** URL for HttpClient.
 
 ---
 
-### 1) Keep your controller exactly as it was when it worked
+### 1) `Program.cs` (no changes from your last working)
 
-**Controllers/GraphController.cs**
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllers();
+builder.Services.AddScoped<IGraphDataRepo, OracleDataRepo>();
+builder.Services.AddScoped<IGraphService, GraphService>();
+
+// we’ll use HttpClient in the component, so just register the default
+builder.Services.AddHttpClient();
+
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+
+var app = builder.Build();
+
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+app.UseRouting();
+
+app.MapControllers();
+app.MapBlazorHub();
+app.MapFallbackToPage("/_Host");
+
+app.Run();
+```
+
+---
+
+### 2) `GraphController.cs` (serve the cached PNG only)
 
 ```csharp
 using Microsoft.AspNetCore.Mvc;
@@ -22,7 +59,6 @@ namespace StarTrends.Controllers
         private readonly IGraphService _svc;
         public GraphController(IGraphService svc) => _svc = svc;
 
-        // GET /api/graphs/otc-product-types
         [HttpGet("otc-product-types")]
         public async Task<IActionResult> Get()
         {
@@ -35,30 +71,28 @@ namespace StarTrends.Controllers
 
 ---
 
-### 2) Wire up HTTP-client with a BaseAddress
+### 3) `GraphService.cs` (exactly as before)
 
-In **Program.cs**, right after you call `builder.Services.AddHttpClient()` do:
+Make sure you have your `RegenerateChartAsync()` already run *once* (so the file exists), then you only need:
 
 ```csharp
-builder.Services.AddHttpClient("API", client =>
+public async Task<byte[]> GetCachedChartAsync()
 {
-    client.BaseAddress = new Uri("https://localhost:7287/"); 
-    // ← *exactly* your app’s URL*
-});
+    var path = Path.Combine(AppContext.BaseDirectory, "wwwroot", "charts", "otc-product-types.png");
+    return await File.ReadAllBytesAsync(path);
+}
 ```
-
-(This ensures any relative URL you pass into that named client will become absolute.)
 
 ---
 
-### 3) The minimal ChartViewer.razor
+### 4) **Updated** `Shared/ChartViewer.razor`
 
 ```razor
-@inject IHttpClientFactory Clients
+@inject HttpClient Http
 @inject NavigationManager Nav
 
-<img src="data:image/png;base64,@_base64" 
-     alt="OTC Product Types" 
+<img src="@($"data:image/png;base64,{_base64}")"
+     alt="OTC Product Types"
      style="max-width:100%;" />
 
 @code {
@@ -66,31 +100,21 @@ builder.Services.AddHttpClient("API", client =>
 
     protected override async Task OnInitializedAsync()
     {
-        // 1) get the named client
-        var http = Clients.CreateClient("API");
+        // build absolute URL so HttpClient has a BaseAddress it can use
+        var url = $"{Nav.BaseUri}api/graphs/otc-product-types";
 
-        // 2) build the absolute URI to your controller
-        //    here we can just pass the relative path because
-        //    the client already has BaseAddress set.
-        var bytes = await http.GetByteArrayAsync("api/graphs/otc-product-types");
+        // fetch the raw bytes
+        var bytes = await Http.GetByteArrayAsync(url);
 
-        // 3) convert to Base64 and bind
+        // convert to inline base64 PNG
         _base64 = Convert.ToBase64String(bytes);
     }
 }
 ```
 
-**Why this works:**
+**Why this fixes the URI error**
 
-1. **Controller** remains the same working single‐action endpoint.
-2. **HttpClient** is configured with `BaseAddress`, so your `GetByteArrayAsync("api/graphs/otc-product-types")` becomes a valid `https://localhost:7287/api/graphs/otc-product-types` request.
-3. **ChartViewer** no longer uses a relative URL against a client with no base; it uses the named client and BaseAddress, so you’ll never see “Invalid request URI.”
+* By concatenating `Nav.BaseUri` (which is your app’s origin + “/”) to the API path, you give `Http.GetByteArrayAsync` an **absolute** URI.
+* You’ll once again get exactly one chart, rendered as an inline `<img>` in your Blazor page.
 
----
-
-#### Final steps:
-
-1. Drop in the controller above.
-2. In `Program.cs`, configure the named client as shown.
-3. Replace your ChartViewer.razor with the snippet above.
-4. `dotnet clean && dotnet run` and navigate to `/`—you should see your chart rendered exactly once again.
+Drop *only* those four files in, rebuild, and you should see your single chart come back.
