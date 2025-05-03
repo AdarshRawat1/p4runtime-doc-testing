@@ -1,69 +1,13 @@
-**Reverting to earlier configuration**
-
-The user wants to restore the earlier working state where a static PNG image was displayed on the page. They need the config to remove later changes and return to the original setup. This includes the Program.cs, ChartViewer.razor, and GraphController/GraphService modifications that worked. The initial setup had **GraphController** serving the PNG via an endpoint (`Get` returned a file) and **ChartViewer** rendering the image via an HTTP call fetching the PNG image directly as a base64 string.
-
-**Reconstructing the earlier setup**
-
-The user wants to return to a previous working setup where a Python script wrote the chart image to the `wwwroot/charts` folder and displayed it instantly via an `<img>` tag. A refresh button triggered an update by calling the refresh endpoint, which regenerated the chart and added a timestamp. To restore that state, the steps involve:
-
-* Configuring `Program.cs` with necessary routes and services.
-* Setting up `GraphController` with endpoints for fetching the chart and refreshing it.
-* Ensuring `GraphService` can regenerate the chart and serve it from `wwwroot/charts`.
-* Rebuilding `ChartViewer.razor` with the correct setup for displaying and refreshing the chart.
-
-**Restoring to the earlier image rendering state**
-
-To meet the user's request for the working state where only one image is rendered, we can simplify the setup like this:
-
-* **Program.cs**: Adjusted to only include essentials, with `UseStaticFiles` and `MapControllers` right after setting up services.
-* **GraphController.cs**: Retain the `/otc-product-types` endpoint to serve cached charts and keep the refresh endpoint (`/refresh-otc-chart`), though no refresh functionality is needed for now.
-* **ChartViewer.razor**: Set up to fetch the chart as a base64 string on page load (`OnInitializedAsync`), displaying it as a single image with no refresh button.
-
-This will give the user the required setup with just the static image.
+Thought for a couple of seconds
 
 
-Thought for 15 seconds
-
-
-Below is the *exact* minimum set of files you need to roll back to the last known working state—one PNG rendered on page‐load, no refresh button, no cache‐busting, no timestamps. Just a single `<img>` fed by your API:
+Let’s roll right back to “one PNG on load” and make sure your component is calling your controller with an *absolute* URI, so you never get that “invalid request URI” error.
 
 ---
 
-### 1) `Program.cs`
+### 1) Keep your controller exactly as it was when it worked
 
-```csharp
-var builder = WebApplication.CreateBuilder(args);
-
-// register your chart service and repo
-builder.Services.AddControllers();
-builder.Services.AddScoped<IGraphDataRepo, OracleDataRepo>();
-builder.Services.AddScoped<IGraphService, GraphService>();
-
-// HTTP client (if you ever need it)
-builder.Services.AddHttpClient();
-
-// Blazor Server
-builder.Services.AddRazorPages();
-builder.Services.AddServerSideBlazor();
-
-var app = builder.Build();
-
-// standard middleware
-app.UseHttpsRedirection();
-app.UseStaticFiles();
-app.UseRouting();
-
-// map the API and Blazor endpoints
-app.MapControllers();
-app.MapBlazorHub();
-app.MapFallbackToPage("/_Host");
-
-app.Run();
-```
-
----
-
-### 2) `Controllers/GraphController.cs`
+**Controllers/GraphController.cs**
 
 ```csharp
 using Microsoft.AspNetCore.Mvc;
@@ -78,121 +22,75 @@ namespace StarTrends.Controllers
         private readonly IGraphService _svc;
         public GraphController(IGraphService svc) => _svc = svc;
 
-        // GET api/graphs/otc-product-types
+        // GET /api/graphs/otc-product-types
         [HttpGet("otc-product-types")]
         public async Task<IActionResult> Get()
         {
             var png = await _svc.GetCachedChartAsync();
             return File(png, "image/png");
         }
-
-        // GET api/graphs/refresh-otc-chart
-        [HttpGet("refresh-otc-chart")]
-        public async Task<IActionResult> Refresh()
-        {
-            await _svc.RegenerateChartAsync();
-            return Ok();
-        }
     }
 }
 ```
 
 ---
 
-### 3) `Services/GraphService.cs`
+### 2) Wire up HTTP-client with a BaseAddress
+
+In **Program.cs**, right after you call `builder.Services.AddHttpClient()` do:
 
 ```csharp
-using System.Diagnostics;
-using System.IO;
-using System.Text.Json;
-using Microsoft.AspNetCore.Hosting;
-using StarTrends.Data;
-
-namespace StarTrends.Services
+builder.Services.AddHttpClient("API", client =>
 {
-    public class GraphService : IGraphService
-    {
-        private readonly IGraphDataRepo _repo;
-        private readonly string _chartPath;
-
-        public GraphService(IGraphDataRepo repo, IWebHostEnvironment env)
-        {
-            _repo = repo;
-
-            // ensure the folder exists
-            var chartsDir = Path.Combine(env.ContentRootPath, "wwwroot", "charts");
-            Directory.CreateDirectory(chartsDir);
-
-            _chartPath = Path.Combine(chartsDir, "otc-product-types.png");
-        }
-
-        public async Task<byte[]> GetCachedChartAsync()
-            => await File.ReadAllBytesAsync(_chartPath);
-
-        public async Task RegenerateChartAsync()
-        {
-            // fetch your data
-            var raw = await _repo.FetchOtcDataAsync(7);
-            var payload = JsonSerializer.Serialize(raw, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
-
-            // run Python to get fresh PNG bytes
-            var psi = new ProcessStartInfo
-            {
-                FileName = "python",
-                Arguments = "render.py",
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = Path.Combine(AppContext.BaseDirectory, "PythonTools")
-            };
-
-            using var proc = Process.Start(psi);
-            await proc.StandardInput.WriteAsync(payload);
-            proc.StandardInput.Close();
-
-            using var ms = new MemoryStream();
-            await proc.StandardOutput.BaseStream.CopyToAsync(ms);
-            await proc.WaitForExitAsync();
-
-            // overwrite the file on disk
-            await File.WriteAllBytesAsync(_chartPath, ms.ToArray());
-        }
-    }
-}
+    client.BaseAddress = new Uri("https://localhost:7287/"); 
+    // ← *exactly* your app’s URL*
+});
 ```
+
+(This ensures any relative URL you pass into that named client will become absolute.)
 
 ---
 
-### 4) `Shared/ChartViewer.razor`
+### 3) The minimal ChartViewer.razor
 
 ```razor
-@inject HttpClient Http
+@inject IHttpClientFactory Clients
+@inject NavigationManager Nav
 
-<img src="@($"data:image/png;base64,{_base64}")"
-     alt="OTC Product Types (last 7 days)"
+<img src="data:image/png;base64,@_base64" 
+     alt="OTC Product Types" 
      style="max-width:100%;" />
 
 @code {
-    private string _base64;
+    private string _base64 = "";
 
     protected override async Task OnInitializedAsync()
     {
-        // load the one chart on startup
-        var bytes = await Http.GetByteArrayAsync("api/graphs/otc-product-types");
+        // 1) get the named client
+        var http = Clients.CreateClient("API");
+
+        // 2) build the absolute URI to your controller
+        //    here we can just pass the relative path because
+        //    the client already has BaseAddress set.
+        var bytes = await http.GetByteArrayAsync("api/graphs/otc-product-types");
+
+        // 3) convert to Base64 and bind
         _base64 = Convert.ToBase64String(bytes);
     }
 }
 ```
 
+**Why this works:**
+
+1. **Controller** remains the same working single‐action endpoint.
+2. **HttpClient** is configured with `BaseAddress`, so your `GetByteArrayAsync("api/graphs/otc-product-types")` becomes a valid `https://localhost:7287/api/graphs/otc-product-types` request.
+3. **ChartViewer** no longer uses a relative URL against a client with no base; it uses the named client and BaseAddress, so you’ll never see “Invalid request URI.”
+
 ---
 
-1. Copy these four files *exactly* into your project, replacing whatever you currently have.
-2. Run `dotnet clean && dotnet run`.
-3. Navigate to `/` and you should see **one** chart rendered immediately on page load.
+#### Final steps:
 
-This brings you right back to the last known working state.
+1. Drop in the controller above.
+2. In `Program.cs`, configure the named client as shown.
+3. Replace your ChartViewer.razor with the snippet above.
+4. `dotnet clean && dotnet run` and navigate to `/`—you should see your chart rendered exactly once again.
