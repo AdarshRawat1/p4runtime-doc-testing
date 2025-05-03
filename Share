@@ -1,94 +1,67 @@
-**Clarifying graph duplication**
-
-The user is noticing two graphs and wants a clear "last updated" timestamp. This might be due to two calls happening: one from the direct `<img>` test and another from the ChartViewer. To fix that, I'd suggest removing the `<img>` test on the page.
-
-For the "last updated" text, a Python script could potentially track it by embedding metadata or, more simply, using file creation time or HTTP headers. Alternatively, the ChartViewer could set `LastUpdated=DateTime.Now` on refresh to display the updated time.
-
-**Modifying ChartViewer and Python script**
-
-The user wants to see a "clear time updated text." To handle this, we could modify ChartViewer to display either the last file modification time or a timestamp written by the Python script. A simpler approach would be for the Python script to generate a `.json` file with the timestamp.
-
-The Python script could save this alongside the PNG file. ChartViewer would then read the `.json` through an API call or directly use `HttpClient.GetFromJsonAsync` to fetch the timestamp.
+Thought for a few seconds
 
 
-Thought for 7 seconds
-
-
-Here’s how to remove the duplicate chart and add a real “Last updated” timestamp, driven by when the PNG file was last written:
+Here’s the minimal work to wire in the “Last updated” timestamp:
 
 ---
 
-## 1) Remove your manual `<img>` test
+## 1) Expose file’s last‐write time in your controller
 
-Make sure **only** this appears in **`Home.razor`** (or wherever you show the chart):
-
-```razor
-@page "/"
-@using StarTrends.Shared
-
-<h3>OTC Product Types (last 7 days)</h3>
-<ChartViewer />
-```
-
-Delete any other `<img src=…>` you added for testing. That ensures you’ll only ever see **one** chart.
-
----
-
-## 2) Expose a “last‐updated” API in your controller
-
-**`GraphController.cs`**:
+**Controllers/GraphController.cs**
 
 ```csharp
-[ApiController]
-[Route("api/graphs")]
-public class GraphController : ControllerBase
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Hosting;
+using StarTrends.Services;
+
+namespace StarTrends.Controllers
 {
-    private readonly IGraphService _svc;
-    private readonly IWebHostEnvironment _env;
-
-    public GraphController(IGraphService svc, IWebHostEnvironment env)
+    [ApiController]
+    [Route("api/graphs")]
+    public class GraphController : ControllerBase
     {
-        _svc = svc;
-        _env = env;
-    }
+        private readonly IGraphService _svc;
+        private readonly IWebHostEnvironment _env;
 
-    [HttpGet("refresh-otc-chart")]
-    public async Task<IActionResult> RefreshOtc()
-    {
-        await _svc.RegenerateChartAsync();
-        return Ok();
-    }
+        public GraphController(IGraphService svc, IWebHostEnvironment env)
+        {
+            _svc = svc;
+            _env = env;
+        }
 
-    [HttpGet("otc-product-types/last-updated")]
-    public IActionResult GetLastUpdated()
-    {
-        var path = Path.Combine(_env.ContentRootPath, "wwwroot", "charts", "otc-product-types.png");
-        if (!System.IO.File.Exists(path))
-            return NotFound();
+        [HttpGet("refresh-otc-chart")]
+        public async Task<IActionResult> RefreshOtc()
+        {
+            await _svc.RegenerateChartAsync();
+            return Ok();
+        }
 
-        var utc = System.IO.File.GetLastWriteTimeUtc(path);
-        return Ok(new { lastUpdatedUtc = utc });
+        [HttpGet("otc-product-types/last-updated")]
+        public IActionResult GetLastUpdated()
+        {
+            var path = Path.Combine(_env.ContentRootPath, "wwwroot", "charts", "otc-product-types.png");
+            if (!System.IO.File.Exists(path))
+                return NotFound();
+
+            var utc = System.IO.File.GetLastWriteTimeUtc(path);
+            return Ok(new { lastUpdatedUtc = utc });
+        }
     }
 }
 ```
 
-* The **`last-updated`** endpoint reads the file’s last‐write time (UTC) and returns it as JSON.
-
 ---
 
-## 3) Update your Blazor component to show that timestamp
+## 2) Call it and render in your Blazor component
 
-**`Shared/ChartViewer.razor`**:
+**Shared/ChartViewer.razor**
 
 ```razor
 @inject HttpClient Http
 @inject NavigationManager Nav
 
-<div>
-  <img 
-    src="@_chartUrl" 
-    alt="OTC Product Types Chart" 
-    style="max-width:100%; display:block; margin-bottom:0.5rem;" />
+<div class="chart-container">
+  <img src="@_chartUrl" alt="OTC Chart" style="max-width:100%; display:block; margin-bottom:0.5rem;" />
 
   @if (!string.IsNullOrEmpty(LastUpdated))
   {
@@ -108,10 +81,7 @@ public class GraphController : ControllerBase
 
   protected override async Task OnInitializedAsync()
   {
-    // 1) build URL with cache-buster
     UpdateChartUrl();
-
-    // 2) fetch last-updated
     await LoadLastUpdated();
   }
 
@@ -122,11 +92,11 @@ public class GraphController : ControllerBase
   {
     try
     {
-      var resp = await Http.GetFromJsonAsync<LastUpdatedDto>("api/graphs/otc-product-types/last-updated");
-      if (resp?.LastUpdatedUtc != null)
+      var dto = await Http.GetFromJsonAsync<LastUpdatedDto>("api/graphs/otc-product-types/last-updated");
+      if (dto is not null)
       {
-        // convert to local time and format
-        LastUpdated = resp.LastUpdatedUtc.ToLocalTime().ToString("g");
+        // format in local time
+        LastUpdated = dto.LastUpdatedUtc.ToLocalTime().ToString("g");
       }
     }
     catch
@@ -137,30 +107,24 @@ public class GraphController : ControllerBase
 
   private async Task RefreshChart()
   {
-    // regenerate on server
     await Http.GetAsync("api/graphs/refresh-otc-chart");
-
-    // update image and timestamp
     UpdateChartUrl();
     await LoadLastUpdated();
   }
 
-  class LastUpdatedDto
+  private class LastUpdatedDto
   {
     public DateTime LastUpdatedUtc { get; set; }
   }
 }
 ```
 
-**Key points**:
-
-* On init, we call `LoadLastUpdated()` to get the existing file’s timestamp.
-* On refresh, we re-hit the refresh API, then update both the image URL **and** the timestamp.
-
 ---
 
-With these changes:
+### How it works
 
-1. You’ll only ever get **one** `<ChartViewer />` on the page.
-2. You’ll see clear “Last updated: 5/3/2025 4:12 PM” text under the chart.
-3. The browser will always pull the freshest PNG thanks to the `?ts=` cache-buster.
+* **On init**: we set the `<img>` URL with a cache-busting `?ts=` and fetch the last‐write time from your new endpoint.
+* **On refresh**: we call `api/graphs/refresh-otc-chart`, bump the URL (so browser re-requests), then re-fetch the timestamp.
+* The timestamp is shown in **local** format (`ToString("g")`).
+
+Drop these in, rebuild, and you’ll see a single chart with a live “Last updated” line underneath.
