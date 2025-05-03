@@ -1,130 +1,54 @@
-Thought for a few seconds
-
-
-Here’s the minimal work to wire in the “Last updated” timestamp:
-
----
-
-## 1) Expose file’s last‐write time in your controller
-
-**Controllers/GraphController.cs**
-
-```csharp
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Hosting;
-using StarTrends.Services;
-
-namespace StarTrends.Controllers
-{
-    [ApiController]
-    [Route("api/graphs")]
-    public class GraphController : ControllerBase
-    {
-        private readonly IGraphService _svc;
-        private readonly IWebHostEnvironment _env;
-
-        public GraphController(IGraphService svc, IWebHostEnvironment env)
-        {
-            _svc = svc;
-            _env = env;
-        }
-
-        [HttpGet("refresh-otc-chart")]
-        public async Task<IActionResult> RefreshOtc()
-        {
-            await _svc.RegenerateChartAsync();
-            return Ok();
-        }
-
-        [HttpGet("otc-product-types/last-updated")]
-        public IActionResult GetLastUpdated()
-        {
-            var path = Path.Combine(_env.ContentRootPath, "wwwroot", "charts", "otc-product-types.png");
-            if (!System.IO.File.Exists(path))
-                return NotFound();
-
-            var utc = System.IO.File.GetLastWriteTimeUtc(path);
-            return Ok(new { lastUpdatedUtc = utc });
-        }
-    }
-}
-```
-
----
-
-## 2) Call it and render in your Blazor component
-
-**Shared/ChartViewer.razor**
-
-```razor
 @inject HttpClient Http
 @inject NavigationManager Nav
 
 <div class="chart-container">
-  <img src="@_chartUrl" alt="OTC Chart" style="max-width:100%; display:block; margin-bottom:0.5rem;" />
+  <img 
+    src="@_chartUrl" 
+    alt="OTC Product Types Chart" 
+    style="max-width:100%; display:block; margin-bottom:0.5rem;" />
 
-  @if (!string.IsNullOrEmpty(LastUpdated))
-  {
-    <div class="text-muted" style="font-size:0.9rem">
-      Last updated: @LastUpdated
-    </div>
-  }
-
-  <button class="btn btn-sm btn-outline-primary mt-2" @onclick="RefreshChart">
-    ↻ Refresh
+  <button class="btn btn-sm btn-outline-primary mt-2" @onclick="RefreshChart" disabled="@_loading">
+    @(_loading ? "Refreshing…" : "↻ Refresh")
   </button>
 </div>
 
 @code {
   private string _chartUrl = "";
-  private string? LastUpdated;
+  private bool   _loading  = false;
 
-  protected override async Task OnInitializedAsync()
+  protected override void OnInitialized()
   {
-    UpdateChartUrl();
-    await LoadLastUpdated();
+    // Set initial URL
+    _UpdateChartUrl();
   }
 
-  private void UpdateChartUrl()
-    => _chartUrl = $"{Nav.BaseUri}charts/otc-product-types.png?ts={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
-
-  private async Task LoadLastUpdated()
+  private void _UpdateChartUrl()
   {
-    try
-    {
-      var dto = await Http.GetFromJsonAsync<LastUpdatedDto>("api/graphs/otc-product-types/last-updated");
-      if (dto is not null)
-      {
-        // format in local time
-        LastUpdated = dto.LastUpdatedUtc.ToLocalTime().ToString("g");
-      }
-    }
-    catch
-    {
-      LastUpdated = null;
-    }
+    // Build an absolute URL so HttpClient.GetAsync will go to the right place
+    _chartUrl = $"{Nav.BaseUri}charts/otc-product-types.png?ts={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
   }
 
   private async Task RefreshChart()
   {
-    await Http.GetAsync("api/graphs/refresh-otc-chart");
-    UpdateChartUrl();
-    await LoadLastUpdated();
-  }
+    _loading = true;
+    StateHasChanged();
 
-  private class LastUpdatedDto
-  {
-    public DateTime LastUpdatedUtc { get; set; }
+    // IMPORTANT: use absolute URL here
+    var refreshUrl = $"{Nav.BaseUri}api/graphs/refresh-otc-chart";
+    var resp = await Http.GetAsync(refreshUrl);
+
+    if (resp.IsSuccessStatusCode)
+    {
+      // bump the cache-buster so the browser will re-fetch
+      _UpdateChartUrl();
+    }
+    else
+    {
+      // optionally handle error (e.g. show toast)
+      Console.Error.WriteLine($"Refresh failed: {resp.StatusCode}");
+    }
+
+    _loading = false;
+    StateHasChanged();
   }
 }
-```
-
----
-
-### How it works
-
-* **On init**: we set the `<img>` URL with a cache-busting `?ts=` and fetch the last‐write time from your new endpoint.
-* **On refresh**: we call `api/graphs/refresh-otc-chart`, bump the URL (so browser re-requests), then re-fetch the timestamp.
-* The timestamp is shown in **local** format (`ToString("g")`).
-
-Drop these in, rebuild, and you’ll see a single chart with a live “Last updated” line underneath.
