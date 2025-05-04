@@ -1,88 +1,83 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Hosting;
+// ChartGeneratorService.cs
+using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using StarTrends.Services;
+using StarTrends.Models;
 
-public class ChartUpdaterWorker : BackgroundService
+namespace StarTrends.Services
 {
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ILogger<ChartUpdaterWorker> _logger;
-    private readonly string _metaPath;
-    private readonly TimeSpan _interval;
-
-    public ChartUpdaterWorker(
-        IServiceScopeFactory scopeFactory,
-        IConfiguration        config,
-        IHostEnvironment      env,
-        ILogger<ChartUpdaterWorker> logger)
+    public class ChartGeneratorService : IChartGeneratorService
     {
-        _scopeFactory = scopeFactory;
-        _logger       = logger;
-        _interval     = TimeSpan.FromMinutes(
-                           config.GetValue<int>("ChartUpdateIntervalMinutes", 5));
+        private readonly ILogger<ChartGeneratorService> _logger;
+        private readonly string _scriptsFolder;
+        private readonly string _csvFolder;      // ← new
+        private readonly string _chartsFolder;
 
-        // Ensure the charts folder exists under wwwroot/charts
-        var chartsFolder = Path.Combine(
-            env.ContentRootPath,
-            "wwwroot",
-            config["ChartsOutputPath"] ?? "charts");
-        Directory.CreateDirectory(chartsFolder);
-
-        _metaPath = Path.Combine(chartsFolder, "metadata.json");
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
+        public ChartGeneratorService(
+            ILogger<ChartGeneratorService> logger,
+            IConfiguration        config,
+            IHostEnvironment      env)
         {
-            try
+            _logger = logger;
+
+            // where your .py lives
+            _scriptsFolder = Path.Combine(
+                env.ContentRootPath,
+                config["ChartScriptsPath"] ?? "PythonScripts");
+
+            // NEW: where to dump CSVs
+            _csvFolder = Path.Combine(
+                env.ContentRootPath,
+                config["CsvOutputPath"] ?? "chart_data");
+
+            // where to put PNGs
+            _chartsFolder = Path.Combine(
+                env.ContentRootPath,
+                "wwwroot",
+                config["ChartsOutputPath"] ?? "charts");
+
+            Directory.CreateDirectory(_scriptsFolder);
+            Directory.CreateDirectory(_csvFolder);    // ← ensure it exists
+            Directory.CreateDirectory(_chartsFolder);
+        }
+
+        public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
+        {
+            var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+
+            // CSV now lives in its own folder
+            var csvPath = Path.Combine(_csvFolder, $"product_trades_{ts}.csv");
+            var pngPath = Path.Combine(_chartsFolder, $"product_trades_{ts}.png");
+
+            // 1) Write CSV
+            await using (var w = new StreamWriter(csvPath))
             {
-                _logger.LogInformation("⏳ Starting chart update at {time}", DateTime.Now);
-
-                // Create a DI scope
-                using var scope = _scopeFactory.CreateScope();
-
-                // Resolve your scoped services inside the scope
-                var oracle   = scope.ServiceProvider.GetRequiredService<IOracleDataService>();
-                var chartGen = scope.ServiceProvider.GetRequiredService<IChartGeneratorService>();
-
-                // 1) Fetch data
-                var data = await oracle.GetProductTradeCountsAsync(
-                    DateTime.Now.AddDays(-7));
-
-                // 2) Generate chart and get its URL
-                var url = await chartGen.GenerateProductTradeChartAsync(data);
-
-                // 3) Write metadata.json
-                var meta = new Dictionary<string, object>
-                {
-                    ["productTrade"] = new
-                    {
-                        ImageUrl    = url,
-                        LastUpdated = DateTime.UtcNow
-                    }
-                };
-
-                await File.WriteAllTextAsync(
-                    _metaPath,
-                    JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }),
-                    stoppingToken);
-
-                _logger.LogInformation("✅ Chart updated: {url}", url);
+                await w.WriteLineAsync("ProductTypeName,TotalTrades");
+                foreach (var item in data)
+                    await w.WriteLineAsync($"{item.ProductTypeName},{item.TotalTrades}");
             }
-            catch (Exception ex)
+
+            // 2) Call Python
+            var script = Path.Combine(_scriptsFolder, "generate_product_trade_chart.py");
+            var psi = new ProcessStartInfo
             {
-                _logger.LogError(ex, "❌ Error during chart update");
-            }
+                FileName              = "python",
+                Arguments             = $"\"{script}\" \"{csvPath}\" \"{pngPath}\"",
+                RedirectStandardError = true,
+                UseShellExecute       = false
+            };
 
-            await Task.Delay(_interval, stoppingToken);
+            using var proc = Process.Start(psi)
+                           ?? throw new InvalidOperationException("Cannot start Python");
+            var err = await proc.StandardError.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+            if (!string.IsNullOrEmpty(err))
+                _logger.LogError(err);
+
+            // 3) Return web‐path for the PNG
+            return $"/charts/{Path.GetFileName(pngPath)}";
         }
     }
 }
+
