@@ -1,103 +1,103 @@
-@using System.Net.Http.Json
-@inject HttpClient Http
-@namespace StarTrends.Shared
+// File: Services/IChartRefresher.cs
+namespace StarTrends.Services
+{
+    public interface IChartRefresher
+    {
+        string ChartId { get; }
+        Task<ChartMeta> RefreshAsync();
+    }
 
-<div class="card mb-4 shadow-sm rounded">
-  <div class="card-header bg-light d-flex justify-content-between align-items-center px-3 py-2">
-    <h5 class="mb-0 fs-6 text-primary">@Title</h5>
-    <div class="d-flex align-items-center">
-      @if (meta != null)
-      {
-        <small class="text-muted me-3">
-          @meta.LastUpdated.ToLocalTime().ToString("g")
-        </small>
-      }
-      <button class="btn btn-sm btn-outline-primary d-flex align-items-center" @onclick="Refresh" disabled="@isLoading">
-        @if (isLoading)
-        {
-          <span class="spinner-border spinner-border-sm text-primary me-2" role="status" aria-hidden="true"></span>
-        }
-        <span>@(isLoading ? "Refreshing..." : "Refresh")</span>
-      </button>
-    </div>
-  </div>
-  <div class="card-body p-3 text-center">
-    @if (isLoading)
-    {
-      <p class="text-secondary my-5">Loading chart…</p>
-    }
-    else if (!string.IsNullOrEmpty(error))
-    {
-      <div class="alert alert-danger mb-0">@error</div>
-    }
-    else if (meta != null)
-    {
-      <img src="@($"{meta.ImageUrl}?t={meta.LastUpdated.Ticks}")" class="img-fluid rounded" alt="@Title" />
-    }
-  </div>
-</div>
-
-@code {
-  [Parameter] public string GraphId { get; set; }
-  [Parameter] public string Title { get; set; }
-
-  private bool isLoading;
-  private string error;
-  private ChartMeta meta;
-
-  protected override async Task OnInitializedAsync()
-  {
-    await LoadMetadata();
-  }
-
-  private async Task LoadMetadata()
-  {
-    isLoading = true;
-    error = null;
-    try
-    {
-      var dict = await Http.GetFromJsonAsync<Dictionary<string, ChartMeta>>("charts/metadata.json");
-      if (dict != null && dict.TryGetValue(GraphId, out meta))
-      {
-      }
-      else
-      {
-        error = $"No metadata found for '{GraphId}'";
-      }
-    }
-    catch (Exception ex)
-    {
-      error = ex.Message;
-    }
-    finally
-    {
-      isLoading = false;
-    }
-  }
-
-  private async Task Refresh()
-  {
-    isLoading = true;
-    error = null;
-    try
-    {
-      var resp = await Http.PostAsync($"/api/charts/{GraphId}/refresh", null);
-      resp.EnsureSuccessStatusCode();
-      meta = await resp.Content.ReadFromJsonAsync<ChartMeta>();
-    }
-    catch (Exception ex)
-    {
-      error = ex.Message;
-    }
-    finally
-    {
-      isLoading = false;
-    }
-  }
-
-  public class ChartMeta
-  {
-    public string ImageUrl { get; set; }
-    public DateTime LastUpdated { get; set; }
-  }
+    public record ChartMeta(string ImageUrl, DateTime LastUpdated);
 }
+
+// File: Services/ProductTradesChartRefresher.cs
+using StarTrends.Models;
+
+namespace StarTrends.Services
+{
+    public class ProductTradesChartRefresher : IChartRefresher
+    {
+        private readonly IOracleDataService _oracle;
+        private readonly IChartGeneratorService _chartGen;
+
+        public string ChartId => "product_trades";
+
+        public ProductTradesChartRefresher(
+            IOracleDataService oracle,
+            IChartGeneratorService chartGen)
+        {
+            _oracle   = oracle;
+            _chartGen = chartGen;
+        }
+
+        public async Task<ChartMeta> RefreshAsync()
+        {
+            var data = await _oracle.GetProductTradeCountsAsync(DateTime.UtcNow.AddDays(-7));
+            var url  = await _chartGen.GenerateProductTradeChartAsync(data);
+            return new ChartMeta(url, DateTime.UtcNow);
+        }
+    }
+}
+
+// File: Controllers/ChartsController.cs
+using Microsoft.AspNetCore.Mvc;
+using StarTrends.Services;
+
+namespace StarTrends.Controllers
+{
+    [ApiController]
+    [Route("api/charts")]
+    public class ChartsController : ControllerBase
+    {
+        private readonly IEnumerable<IChartRefresher> _refreshers;
+
+        public ChartsController(IEnumerable<IChartRefresher> refreshers)
+        {
+            _refreshers = refreshers;
+        }
+
+        [HttpGet("metadata")]
+        public IActionResult GetMetadata()
+        {
+            var dict = _refreshers.ToDictionary(
+                r => r.ChartId,
+                r => r.RefreshAsync().Result);
+            return Ok(dict);
+        }
+
+        [HttpPost("{chartId}/refresh")]
+        public async Task<IActionResult> Refresh(string chartId)
+        {
+            var refresher = _refreshers.FirstOrDefault(r => r.ChartId == chartId);
+            if (refresher == null)
+                return NotFound();
+            var meta = await refresher.RefreshAsync();
+            return Ok(meta);
+        }
+    }
+}
+
+// File: Program.cs (additions)
+using StarTrends.Services;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// register refreshers
+builder.Services.AddTransient<IChartRefresher, ProductTradesChartRefresher>();
+
+builder.Services.AddControllers();
+
+// ... other registrations (RazorPages, Blazor, HttpClient, services, hosted worker) ...
+
+var app = builder.Build();
+
+app.UseRouting();
+app.UseEndpoints(endpoints =>
+{
+    endpoints.MapControllers();
+    endpoints.MapRazorPages();
+    endpoints.MapBlazorHub();
+    endpoints.MapFallbackToPage("/_Host");
+});
+
+app.Run();
