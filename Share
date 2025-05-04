@@ -1,313 +1,74 @@
-// ==============================
-// Project: StarTrends (Blazor Server)
-// ==============================
-
-// File: appsettings.json (in StarTrends root)
-{
-"ConnectionStrings": {
-"OracleDb": "User Id=YOUR\_USER;Password=YOUR\_PWD;Data Source=YOUR\_SOURCE"
-},
-"ChartScriptsPath": "PythonScripts",
-"CsvOutputPath": "chart\_data",
-"ChartsOutputPath": "charts"
-}
-
----
-
-// File: Program.cs
-using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using StarTrends.Services;
-
-var builder = WebApplication.CreateBuilder(args);
-
-// 1) Razor Pages & Blazor Server
-builder.Services.AddRazorPages();
-builder.Services.AddServerSideBlazor();
-
-// 2) HTTP client for components
-builder.Services.AddHttpClient();
-
-// 3) App services
-builder.Services.AddScoped\<IOracleDataService, OracleDataService>();
-builder.Services.AddScoped\<IChartGeneratorService, ChartGeneratorService>();
-
-var app = builder.Build();
-
-app.UseStaticFiles();
-app.UseRouting();
-
-// 4) Blazor endpoints
-app.MapRazorPages();
-app.MapBlazorHub();
-app.MapFallbackToPage("/\_Host");
-app.Run();
-
----
-
-// File: Services/IOracleDataService.cs
-using StarTrends.Models;
-
-namespace StarTrends.Services
-{
-public interface IOracleDataService
-{
-Task\<IEnumerable<ProductTradeCount>> GetProductTradeCountsAsync(DateTime fromDate);
-}
-}
-
----
-
-// File: Services/OracleDataService.cs
-using Oracle.ManagedDataAccess.Client;
+// -----------------------------
+// ChartGeneratorService.cs  (StarTrends.Services)
+// -----------------------------
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using StarTrends.Models;
-
-namespace StarTrends.Services
-{
-public class OracleDataService : IOracleDataService
-{
-private readonly string \_conn;
-private readonly ILogger<OracleDataService> \_log;
-public OracleDataService(IConfiguration config, ILogger<OracleDataService> log)
-{
-\_conn = config.GetConnectionString("OracleDb");
-\_log  = log;
-}
-public async Task\<IEnumerable<ProductTradeCount>> GetProductTradeCountsAsync(DateTime fromDate)
-{
-var list = new List<ProductTradeCount>();
-const string sql = @"
-SELECT prd\_typ\_name, COUNT(*) AS total\_trades
-FROM star\_workflow w
-JOIN (
-SELECT a.*, CASE WHEN a.prd\_typ\_cod='IR1' THEN 'IR Swap (Fx/Fl)' ELSE a.prd\_typ\_cod END AS prd\_typ\_name
-FROM star\_contract PARTITION(product\_oth) a
-) c ON c.con\_no = w\.con\_no
-WHERE inp\_dt > \:fromDate AND c.mrr\_typ\_cod IN (0,1,6)
-GROUP BY prd\_typ\_name
-ORDER BY total\_trades DESC";
-try
-{
-await using var conn = new OracleConnection(\_conn);
-await conn.OpenAsync();
-await using var cmd = new OracleCommand(sql, conn);
-cmd.Parameters.Add(new OracleParameter("fromDate", fromDate));
-await using var rdr = await cmd.ExecuteReaderAsync();
-while (await rdr.ReadAsync())
-{
-list.Add(new ProductTradeCount
-{
-ProductTypeName = rdr.GetString(0),
-TotalTrades     = rdr.GetInt32(1)
-});
-}
-}
-catch (Exception ex)
-{
-\_log.LogError(ex, "oracle fetch error");
-throw;
-}
-return list;
-}
-}
-}
-
----
-
-// File: Services/IChartGeneratorService.cs
-using StarTrends.Models;
-
-namespace StarTrends.Services
-{
-public interface IChartGeneratorService
-{
-Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data);
-}
-}
-
----
-
-// File: Services/ChartGeneratorService.cs
 using System.Diagnostics;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using StarTrends.Models;
 
 namespace StarTrends.Services
 {
-public class ChartGeneratorService : IChartGeneratorService
-{
-private readonly ILogger<ChartGeneratorService> \_log;
-private readonly string \_scriptDir;
-private readonly string \_csvDir;
-private readonly string \_chartDir;
-
-```
-    public ChartGeneratorService(
-        ILogger<ChartGeneratorService> log,
-        IConfiguration config,
-        IHostEnvironment env)
+    public class ChartGeneratorService : IChartGeneratorService
     {
-        _log      = log;
-        _scriptDir = Path.Combine(env.ContentRootPath, config["ChartScriptsPath"]);
-        _csvDir    = Path.Combine(env.ContentRootPath, config["CsvOutputPath"]);
-        _chartDir  = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"]);
-        Directory.CreateDirectory(_scriptDir);
-        Directory.CreateDirectory(_csvDir);
-        Directory.CreateDirectory(_chartDir);
-    }
+        private readonly ILogger<ChartGeneratorService> _log;
+        private readonly string _scriptDir, _csvDir, _chartDir;
 
-    public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
-    {
-        var ts   = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-        var csv  = Path.Combine(_csvDir,   $"product_trades_{ts}.csv");
-        var png  = Path.Combine(_chartDir, $"product_trades_{ts}.png");
-        await File.WriteAllTextAsync(csv,
-            "ProductTypeName,TotalTrades\n" +
-            string.Join("\n", data.Select(d => $"{d.ProductTypeName},{d.TotalTrades}"))
-        );
-        var script = Path.Combine(_scriptDir, "generate_product_trade_chart.py");
-        var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csv}\" \"{png}\"")
+        public ChartGeneratorService(
+            ILogger<ChartGeneratorService> log,
+            IConfiguration config,
+            IHostEnvironment env)
         {
-            RedirectStandardError = true,
-            UseShellExecute       = false
-        };
-        using var proc = Process.Start(psi)!;
-        var err = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
-        if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
-        return $"/charts/{Path.GetFileName(png)}";
+            _log       = log;
+            _scriptDir = Path.Combine(env.ContentRootPath, config["ChartScriptsPath"]);
+            _csvDir    = Path.Combine(env.ContentRootPath, config["CsvOutputPath"]);
+            _chartDir  = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"]);
+
+            Directory.CreateDirectory(_scriptDir);
+            Directory.CreateDirectory(_csvDir);
+            Directory.CreateDirectory(_chartDir);
+        }
+
+        public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
+        {
+            var ts  = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var csv = Path.Combine(_csvDir,   $"product_trades_{ts}.csv");
+            var png = Path.Combine(_chartDir, $"product_trades_{ts}.png");
+
+            // 1) write CSV
+            await File.WriteAllTextAsync(csv,
+                "ProductTypeName,TotalTrades\n" +
+                string.Join("\n", data.Select(d => $"{d.ProductTypeName},{d.TotalTrades}"))
+            );
+
+            // 2) invoke Python
+            var script = Path.Combine(_scriptDir, "generate_product_trade_chart.py");
+            if (!File.Exists(script))
+                throw new FileNotFoundException("chart script missing", script);
+
+            var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csv}\" \"{png}\"")
+            {
+                RedirectStandardError = true,
+                UseShellExecute       = false
+            };
+
+            using var p = Process.Start(psi)!
+                ?? throw new InvalidOperationException("Failed to start python");
+            var err = await p.StandardError.ReadToEndAsync();
+            await p.WaitForExitAsync();
+            if (!string.IsNullOrWhiteSpace(err))
+                _log.LogError(err);
+
+            return $"/charts/{Path.GetFileName(png)}";
+        }
     }
 }
-```
 
-}
 
----
-
-// File: Models/ProductTradeCount.cs
-namespace StarTrends.Models
-{
-public class ProductTradeCount
-{
-public string ProductTypeName { get; set; }
-public int TotalTrades        { get; set; }
-}
-}
-
----
-
-// File: PythonScripts/generate\_product\_trade\_chart.py
-import sys, pandas as pd, matplotlib.pyplot as plt
-
-def main(inp, outp):
-df = pd.read\_csv(inp)
-plt.figure(figsize=(10,6))
-plt.bar(df\['ProductTypeName'], df\['TotalTrades'])
-plt.xticks(rotation=45, ha='right')
-plt.tight\_layout()
-plt.savefig(outp)
-
-if **name** == '**main**':
-if len(sys.argv)!=3:
-print("Usage: python script \<in.csv> \<out.png>", file=sys.stderr);
-sys.exit(1)
-main(sys.argv\[1], sys.argv\[2])
-
----
-
-// File: Pages/\_Host.cshtml
-@page "/"
-@namespace StarTrends.Pages
-@addTagHelper \*, Microsoft.AspNetCore.Mvc.TagHelpers
-
-<!DOCTYPE html>
-
-<html><head><meta charset="utf-8"/><base href="~/"/><title>StarTrends</title></head>
-<body>
-  <component type="typeof(App)" render-mode="ServerPrerendered" />
-  <script src="_framework/blazor.server.js"></script>
-</body></html>
-
----
-
-// File: Pages/Index.razor
-@page "/"
-@inject HttpClient Http
-
-<h3>Product Trades Last 7 Days</h3>
-@if (meta is null)
-{
-    <p>Loading…</p>
-}
-else
-{
-    <img src="@meta.ImageUrl" alt="Chart" style="max-width:100%;" />
-    <p><small>Last updated: @meta.LastUpdated.ToLocalTime():f</small></p>
-    <button @onclick="Reload" disabled="@loading">@(loading?"…":"Refresh")</button>
-    @if (!string.IsNullOrEmpty(err)) <div class="text-danger">@err</div>
-}
-@code {
-    ChartMeta meta;
-    bool loading;
-    string err;
-    protected override async Task OnInitializedAsync() => await Reload();
-    async Task Reload()
-    {
-        loading = true; err = null;
-        try { meta = await Http.GetFromJsonAsync<ChartMeta>("charts/metadata.json"); }
-        catch (Exception e) { err = e.Message; }
-        loading = false;
-    }
-    record ChartMeta(string ImageUrl, DateTime LastUpdated);
-}
-
-// ==============================
-// Project: ChartUpdater (Worker)
-// ==============================
-
-// File: appsettings.json (in ChartUpdater root)
-{
-"ConnectionStrings": {
-"OracleDb": "User Id=YOUR;Password=PWD;Data Source=SRC"
-},
-"ChartScriptsPath": "PythonScripts",
-"CsvOutputPath": "chart\_data",
-"ChartsOutputPath": "charts",
-"ChartUpdateIntervalMinutes": 5
-}
-
----
-
-// File: Program.cs
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using StarTrends.Services;
-
-Host.CreateDefaultBuilder(args)
-.ConfigureServices((ctx, svc) =>
-{
-svc.AddHttpClient();
-svc.AddScoped\<IOracleDataService, OracleDataService>();
-svc.AddScoped\<IChartGeneratorService, ChartGeneratorService>();
-svc.AddHostedService<ChartUpdaterWorker>();
-})
-.Build()
-.Run();
-
----
-
-// File: ChartUpdaterWorker.cs
-using System;
-using System.Collections.Generic;
-using System.IO;
+// -----------------------------
+// ChartUpdaterWorker.cs  (Worker)
+// -----------------------------
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -315,50 +76,97 @@ using StarTrends.Services;
 
 public class ChartUpdaterWorker : BackgroundService
 {
-private readonly IServiceScopeFactory \_scope;
-private readonly ILogger<ChartUpdaterWorker> \_log;
-private readonly string \_meta;
-private readonly TimeSpan \_interval;
+    private readonly IServiceScopeFactory _scopes;
+    private readonly ILogger<ChartUpdaterWorker> _log;
+    private readonly string _metaPath;
+    private readonly TimeSpan _interval;
 
-```
-public ChartUpdaterWorker(
-    IServiceScopeFactory scope,
-    IConfiguration config,
-    IHostEnvironment env,
-    ILogger<ChartUpdaterWorker> log)
-{
-    _scope    = scope;
-    _log      = log;
-    _interval = TimeSpan.FromMinutes(config.GetValue<int>("ChartUpdateIntervalMinutes"));
-    var charts = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"]);
-    Directory.CreateDirectory(charts);
-    _meta = Path.Combine(charts, "metadata.json");
-}
-
-protected override async Task ExecuteAsync(CancellationToken ct)
-{
-    while (!ct.IsCancellationRequested)
+    public ChartUpdaterWorker(
+        IServiceScopeFactory scopes,
+        IConfiguration config,
+        IHostEnvironment env,
+        ILogger<ChartUpdaterWorker> log)
     {
-        try
+        _scopes   = scopes;
+        _log      = log;
+        _interval = TimeSpan.FromMinutes(config.GetValue<int>("ChartUpdateIntervalMinutes"));
+
+        var charts = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"]);
+        Directory.CreateDirectory(charts);
+        _metaPath = Path.Combine(charts, "metadata.json");
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
         {
-            _log.LogInformation("Starting chart update at {Time}", DateTime.Now);
-            using var s = _scope.CreateScope();
-            var oracle = s.ServiceProvider.GetRequiredService<IOracleDataService>();
-            var gen    = s.ServiceProvider.GetRequiredService<IChartGeneratorService>();
-            var data   = await oracle.GetProductTradeCountsAsync(DateTime.Now.AddDays(-7));
-            var url    = await gen.GenerateProductTradeChartAsync(data);
-            var meta   = new { productTrade = new { ImageUrl = url, LastUpdated = DateTime.UtcNow } };
-            await File.WriteAllTextAsync(_meta, JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }), ct);
-            _log.LogInformation("Chart updated: {Url}", url);
+            try
+            {
+                _log.LogInformation("Updating chart...");
+                using var scope = _scopes.CreateScope();
+                var oracle = scope.ServiceProvider.GetRequiredService<IOracleDataService>();
+                var gen    = scope.ServiceProvider.GetRequiredService<IChartGeneratorService>();
+
+                var data = await oracle.GetProductTradeCountsAsync(DateTime.Now.AddDays(-7));
+                var url  = await gen.GenerateProductTradeChartAsync(data);
+
+                var meta = new { productTrade = new { ImageUrl = url, LastUpdated = DateTime.UtcNow } };
+                await File.WriteAllTextAsync(_metaPath,
+                    JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }),
+                    ct);
+
+                _log.LogInformation("Chart updated: {Url}", url);
+            }
+            catch (Exception ex) {
+                _log.LogError(ex, "Chart update failed");
+            }
+            await Task.Delay(_interval, ct);
         }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "Error updating chart");
-        }
-        await Task.Delay(_interval, ct);
     }
 }
-```
 
-}
 
+// -----------------------------
+// Program.cs  (ChartUpdater Worker)
+// -----------------------------
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using StarTrends.Services;
+
+Host.CreateDefaultBuilder(args)
+    .ConfigureServices((ctx, svc) =>
+    {
+        // scoped chart/oracle services
+        svc.AddScoped<IOracleDataService, OracleDataService>();
+        svc.AddScoped<IChartGeneratorService, ChartGeneratorService>();
+        // hosted background worker
+        svc.AddHostedService<ChartUpdaterWorker>();
+    })
+    .Build()
+    .Run();
+
+
+// -----------------------------
+// Program.cs  (Blazor Site)
+// -----------------------------
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using StarTrends.Services;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddHttpClient();             // for component injection
+builder.Services.AddScoped<IOracleDataService, OracleDataService>();
+builder.Services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
+
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+
+var app = builder.Build();
+app.UseStaticFiles();
+app.UseRouting();
+app.MapRazorPages();
+app.MapBlazorHub();
+app.MapFallbackToPage("/_Host");
+app.Run();
