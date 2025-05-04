@@ -9,12 +9,16 @@
     <div class="d-flex align-items-center">
       @if (meta != null)
       {
-        <span class="text-muted small mr-2">
+        <span class="text-muted small me-3">
           @meta.LastUpdated.ToLocalTime().ToString("g")
         </span>
       }
-      <button class="btn btn-sm btn-outline-secondary" @onclick="Refresh" disabled="isLoading">
-        @(isLoading ? "Refreshing…" : "Refresh")
+      <button class="btn btn-sm btn-outline-secondary d-flex align-items-center" @onclick="Refresh" disabled="@isLoading">
+        @if (isLoading)
+        {
+          <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+        }
+        <span>@(isLoading ? "Refreshing..." : "Refresh")</span>
       </button>
     </div>
   </div>
@@ -27,7 +31,7 @@
     {
       <div class="alert alert-danger mb-0">@error</div>
     }
-    else
+    else if (meta != null)
     {
       <img src="@($"{meta.ImageUrl}?t={meta.LastUpdated.Ticks}")" class="img-fluid" alt="@Title" />
     }
