@@ -1,6 +1,6 @@
 Thought for a second
 
-
+ _log.LogInformation("=== Starting location_deals update at {Time} ===", DateTime.UtcNow);
 Here’s the fully-aliased SQL for your three-axis chart. Just drop this into your C# string and bind `:fromDate` as before:
 
 ```sql
