@@ -1,115 +1,98 @@
-Thought for a couple of seconds
-
-
-Below is everything you need to drop into your solution to add a **“Market Events (Last 30 Days)”** chart in exactly the same modular way as your others. You’ll end up with:
-
-1. A **model**
-2. A **DAL** method
-3. A **ChartGeneratorService** extension
-4. A **Python script**
-5. Two lines in your **ChartUpdaterWorker**
-6. A single `<GraphViewer>` in your Razor page
-
----
-
-### 1) Model
-
-```csharp
-// File: Models/MarketEventCount.cs
+// File: Models/RecBreakCount.cs
 namespace StarTrends.Models
 {
-    public class MarketEventCount
+    public class RecBreakCount
     {
-        public string MarketEventName { get; set; }
-        public int MEVS { get; set; }
+        public string BreakElement { get; set; }
+        public int Total { get; set; }
+        public string ProductTypeName { get; set; }
     }
 }
-```
 
----
-
-### 2) OracleDataService
-
-**Interface** update:
-
-```csharp
-// IOracleDataService.cs
+// File: Services/IOracleDataService.cs (add signature)
 using StarTrends.Models;
 
 public interface IOracleDataService
 {
-    // …existing…
-    Task<IEnumerable<MarketEventCount>> GetMarketEventCountsAsync(DateTime fromDate);
+    // ... existing signatures ...
+    Task<IEnumerable<RecBreakCount>> GetRecBreakCountsAsync(DateTime fromDate);
 }
-```
 
-**Implementation** (with fully‐aliased SQL):
-
-```csharp
-// OracleDataService.cs
+// File: Services/OracleDataService.cs (implement)GetRecBreakCountsAsync
 using Oracle.ManagedDataAccess.Client;
 using StarTrends.Models;
 
-public async Task<IEnumerable<MarketEventCount>> GetMarketEventCountsAsync(DateTime fromDate)
+public async Task<IEnumerable<RecBreakCount>> GetRecBreakCountsAsync(DateTime fromDate)
 {
-    var list = new List<MarketEventCount>();
+    var list = new List<RecBreakCount>();
     const string sql = @"
-WITH clearing AS (
-  SELECT m.con_no, c.clr_org
-  FROM star_mkt_ops m
-  JOIN star_clearing c ON c.con_no = m.con_no
-  WHERE m.mkt_evt_type = 'RPTY'
-    AND m.mev_sub_type = 'UNS'
-    AND m.mod_dt >= :fromDate
-    AND m.status <> 'PROP'
-    AND m.mkt_evt_type <> 'UNDO'
+WITH recbreaks AS (
+  SELECT
+    REGEXP_REPLACE(h.brk_element, '\\[.+\\]') AS brk_element,
+    COUNT(1) AS rec_breaks,
+    c.prd_typ_name
+  FROM star_rec_hist r
+  JOIN (
+    SELECT a.con_no,
+           CASE
+             WHEN a.prd_typ_cod='IR1' THEN 'IR Swap (Fx/Fl)'
+             WHEN a.prd_typ_cod='IR2' THEN 'IR Swap (IMM)'
+             WHEN a.prd_typ_cod='IR3' THEN 'IR Swap (Fl/Fl)'
+             WHEN a.prd_typ_cod='CC1' THEN 'CCY (Fx/Fl)'
+             WHEN a.prd_typ_cod='CC2' THEN 'CCY (Fl/Fl)'
+             WHEN a.prd_typ_cod='CC3' THEN 'CCY (Fx/Fx)'
+             WHEN a.prd_typ_cod='FRA' THEN 'FRA'
+             WHEN a.prd_typ_cod='CAP' THEN 'Cap'
+             WHEN a.prd_typ_cod='FLR' THEN 'Floor'
+             WHEN a.prd_typ_cod='CFS' THEN 'Cap/Floor Straddle'
+             WHEN a.prd_typ_cod='COL' THEN 'Cap/Floor Collar'
+             WHEN a.prd_typ_cod='OSP' THEN 'Swaption Pay'
+             WHEN a.prd_typ_cod='OSR' THEN 'Swaption Rec'
+             WHEN a.prd_typ_cod='OSS' THEN 'Swaption Strad'
+             WHEN a.prd_typ_cod='DFX' THEN 'Deposit (Fixed)'
+             WHEN a.prd_typ_cod='DFL' THEN 'Deposit (Float)'
+             WHEN a.prd_typ_cod='CSH' THEN 'Cashflow'
+             WHEN a.prd_typ_cod='BOC' THEN 'Bond Option Straddle'
+             WHEN a.prd_typ_cod='BME' THEN 'Container BME'
+             WHEN a.prd_typ_cod='IL1' THEN 'Inflation swap (In/Fx)'
+             WHEN a.prd_typ_cod='IL2' THEN 'Inflation swap (In/Fl)'
+             WHEN a.prd_typ_cod='IL3' THEN 'Inflation Fixing Lock (In)'
+             ELSE a.prd_typ_cod
+           END AS prd_typ_name
+    FROM star_contract PARTITION(product_oth) a
+  ) c ON c.con_no = r.con_no
+  JOIN star_rec_break_hist h ON r.con_no = h.con_no
+  WHERE r.lst_mod_dt >= :fromDate
+    AND TRUNC(r.lst_mod_dt,'DAY') < TRUNC(SYSDATE,'DAY')
+    AND r.rec_src='INT'
+    AND r.rec_sts='DIF'
+    AND r.rec_brk_reason NOT IN ('UNR','RFB')
+  GROUP BY c.prd_typ_name, h.brk_element
 ),
-events AS (
-  SELECT 
-    a.mkt_event_id,
-    CASE
-      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='PNV'
-        THEN 'Partial Remaining Party'
-      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
-        AND a.con_no IN (SELECT con_no FROM clearing WHERE clr_org=16582)
-        THEN 'LCH. Clearnet LTD'
-      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
-        AND a.con_no IN (SELECT con_no FROM clearing WHERE clr_org=226198)
-        THEN 'Japan Securities Clearing Corp'
-      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
-        AND a.con_no IN (SELECT con_no FROM clearing WHERE clr_org=7048)
-        THEN 'Chicago Mercantile Exchange'
-      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
-        AND a.con_no IN (SELECT con_no FROM clearing WHERE clr_org=653)
-        THEN 'Banco Central Do Brasil'
-      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
-        THEN 'Remaining Party'
-      WHEN a.mkt_evt_type='UWIN' THEN 'Unwind'
-      WHEN a.mkt_evt_type='STIN' THEN 'Step In'
-      WHEN a.mkt_evt_type='SOUT' THEN 'Step Out'
-      WHEN a.mkt_evt_type='REST' THEN 'Restructure'
-      WHEN a.mkt_evt_type='PTFR' THEN 'Portfolio Reassignment'
-      WHEN a.mkt_evt_type='EXP'  THEN 'Expiry'
-      WHEN a.mkt_evt_type='EP'   THEN 'Physical exercise'
-      WHEN a.mkt_evt_type='EC'   THEN 'Cash exercise'
-      WHEN a.mkt_evt_type='DEL'  THEN 'Delete'
-      WHEN a.mkt_evt_type='EXC'  THEN 'Exercise'
-      ELSE a.mkt_evt_type
-    END AS mkt_evt_name,
-    a.con_no
-  FROM star_mkt_ops a
-  WHERE a.mod_dt >= :fromDate
-    AND a.status <> 'PROP'
-    AND a.mkt_evt_type <> 'UNDO'
+recbreaksordered AS (
+  SELECT brk_element, SUM(rec_breaks) AS total
+  FROM recbreaks
+  GROUP BY brk_element
+  ORDER BY total DESC
+),
+productorders AS (
+  SELECT prd_typ_name, SUM(rec_breaks) AS total
+  FROM recbreaks
+  GROUP BY prd_typ_name
+  ORDER BY total DESC
 )
 SELECT
-  m.mkt_evt_name        AS MarketEventName,
-  COUNT(m.mkt_event_id) AS MEVS
-FROM events m
-JOIN star_contract PARTITION(product_oth) c
-  ON c.con_no = m.con_no
-GROUP BY m.mkt_evt_name
-ORDER BY MEVS DESC";
+  rb.brk_element    AS BreakElement,
+  rb.rec_breaks     AS Total,
+  rb.prd_typ_name   AS ProductTypeName
+FROM recbreaks rb
+WHERE rb.brk_element IN (
+  SELECT brk_element FROM recbreaksordered WHERE ROWNUM <= 5
+)
+  AND rb.prd_typ_name IN (
+    SELECT prd_typ_name FROM productorders WHERE ROWNUM <= 5
+)
+ORDER BY rb.brk_element";
 
     await using var conn = new OracleConnection(_connectionString);
     await conn.OpenAsync();
@@ -118,126 +101,168 @@ ORDER BY MEVS DESC";
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync())
     {
-        list.Add(new MarketEventCount
+        list.Add(new RecBreakCount
         {
-            MarketEventName = reader.GetString(0),
-            MEVS            = reader.GetInt32(1)
+            BreakElement      = reader.GetString(0),
+            Total             = reader.GetInt32(1),
+            ProductTypeName   = reader.GetString(2)
         });
     }
     return list;
 }
-```
 
----
-
-### 3) ChartGeneratorService
-
-**Interface**:
-
-```csharp
-// IChartGeneratorService.cs
+// File: Services/ChartGeneratorService.cs (add method)
 using StarTrends.Models;
-
-public interface IChartGeneratorService
-{
-    // …existing…
-    Task<string> GenerateMarketEventChartAsync(IEnumerable<MarketEventCount> data);
-}
-```
-
-**Implementation**:
-
-```csharp
-// ChartGeneratorService.cs
-using System.Diagnostics;
-using StarTrends.Models;
-
-public async Task<string> GenerateMarketEventChartAsync(IEnumerable<MarketEventCount> data)
+public async Task<string> GenerateRecBreakChartAsync(IEnumerable<RecBreakCount> data)
 {
     var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir,   $"market_events_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"market_events_{ts}.png");
+    var csvPath = Path.Combine(_csvDir,   $"rec_breaks_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"rec_breaks_{ts}.png");
 
     await File.WriteAllTextAsync(csvPath,
-        "MarketEventName,MEVS\n" +
-        string.Join("\n", data.Select(d => $"{d.MarketEventName},{d.MEVS}"))
+        "BreakElement,Total,ProductTypeName\n" +
+        string.Join("\n", data.Select(d => $"{d.BreakElement},{d.Total},{d.ProductTypeName}"))
     );
 
-    var script = Path.Combine(_scriptDir, "generate_market_event_chart.py");
-    var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    var script = Path.Combine(_scriptDir, "generate_rec_break_chart.py");
+    var psi = new ProcessStartInfo("python", $""{script}" "{csvPath}" "{pngPath}"")
     {
         RedirectStandardError = true,
         UseShellExecute       = false
     };
-    using var proc = Process.Start(psi)
-                  ?? throw new InvalidOperationException("Python failed to start");
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Python failed to start");
     var err = await proc.StandardError.ReadToEndAsync();
     await proc.WaitForExitAsync();
-    if (!string.IsNullOrWhiteSpace(err))
-        _log.LogError(err);
+    if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
 
     return $"/charts/{Path.GetFileName(pngPath)}";
 }
-```
 
----
-
-### 4) Python script
-
-```python
-# File: PythonScripts/generate_market_event_chart.py
+// File: PythonScripts/generate_rec_break_chart.py
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
 def main(inp, outp):
     df = pd.read_csv(inp)
-    df.plot(x='MarketEventName', y='MEVS', kind='bar', figsize=(10,6))
+    pivot = df.pivot(index='BreakElement', columns='ProductTypeName', values='Total').fillna(0)
+    pivot.plot(kind='bar', figsize=(10,6))
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(outp)
 
 if __name__ == '__main__':
     if len(sys.argv) != 3:
-        print("Usage: python generate_market_event_chart.py <in.csv> <out.png>", file=sys.stderr)
+        print("Usage: python generate_rec_break_chart.py <in.csv> <out.png>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
-```
 
----
+// File: ChartUpdaterWorker.cs (inside ExecuteAsync)
+var recData = await oracle.GetRecBreakCountsAsync(DateTime.UtcNow.AddYears(-4));
+var recUrl  = await chartGen.GenerateRecBreakChartAsync(recData);
+metadata["rec_breaks"] = new { ImageUrl = recUrl, LastUpdated = DateTime.UtcNow };
+CleanupOldFiles(_chartDir, "rec_breaks_*.png", MaxKeep);
+CleanupOldFiles(_csvDir,   "rec_breaks_*.csv", MaxKeep);
 
-### 5) ChartUpdaterWorker
+// Razor page (e.g. Pages/Index.razor)
+<GraphViewer GraphId="rec_breaks" Title="OTC Rec Breaks Top-5 (Last 4 Years)" />
 
-Inside your `ExecuteAsync` **after** the other charts:
+// OTC contracts by source system (last 7 days, excluding synthetics)
+// 6) add to ChartUpdaterWorker.ExecuteAsync:
+var srcData = await oracle.GetSourceSystemContractCountsAsync(DateTime.UtcNow.AddDays(-7));
+var srcUrl  = await chartGen.GenerateSourceSystemChartAsync(srcData);
+metadata["source_system_contracts"] = new { ImageUrl = srcUrl, LastUpdated = DateTime.UtcNow };
+CleanupOldFiles(_chartDir, "source_system_contracts_*.png", MaxKeep);
+CleanupOldFiles(_csvDir,   "source_system_contracts_*.csv", MaxKeep);
 
-```csharp
-// Market events (last 30 days)
-var meData = await oracle.GetMarketEventCountsAsync(DateTime.UtcNow.AddDays(-30));
-var meUrl  = await chartGen.GenerateMarketEventChartAsync(meData);
-metadata["market_events"] = new { ImageUrl = meUrl, LastUpdated = DateTime.UtcNow };
+// 1) Model: Models/SourceSystemContractCount.cs
+namespace StarTrends.Models
+{
+    public class SourceSystemContractCount
+    {
+        public string SourceSystem { get; set; }
+        public int DealsBooked { get; set; }
+    }
+}
 
-// prune old files
-CleanupOldFiles(_chartDir, "market_events_*.png", MaxKeep);
-CleanupOldFiles(_csvDir,   "market_events_*.csv", MaxKeep);
-```
+// 2) DAL: IOracleDataService.cs
+Task<IEnumerable<SourceSystemContractCount>> GetSourceSystemContractCountsAsync(DateTime fromDate);
 
----
+// OracleDataService.cs implementation:
+public async Task<IEnumerable<SourceSystemContractCount>> GetSourceSystemContractCountsAsync(DateTime fromDate)
+{
+    var list = new List<SourceSystemContractCount>();
+    const string sql = @"
+SELECT
+  CASE WHEN s.dsc IS NULL THEN 'Star' ELSE s.dsc END AS SourceSystem,
+  COUNT(1) AS DealsBooked
+FROM (
+  SELECT mrr_typ_cod, inp_dt, src_sys_cod
+  FROM star_contract PARTITION(product_oth)
+) t
+LEFT JOIN star_src_sys s ON t.src_sys_cod = s.src_sys_cod
+WHERE t.inp_dt >= :fromDate
+  AND t.mrr_typ_cod IN (0,1,6)
+GROUP BY s.dsc
+ORDER BY DealsBooked DESC";
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add(new OracleParameter("fromDate", fromDate));
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        list.Add(new SourceSystemContractCount
+        {
+            SourceSystem = reader.GetString(0),
+            DealsBooked  = reader.GetInt32(1)
+        });
+    }
+    return list;
+}
 
-### 6) UI
+// 3) ChartGeneratorService:
+public async Task<string> GenerateSourceSystemChartAsync(IEnumerable<SourceSystemContractCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir,   $"source_system_contracts_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"source_system_contracts_{ts}.png");
+    await File.WriteAllTextAsync(csvPath,
+        "SourceSystem,DealsBooked
+" +
+        string.Join("
+", data.Select(d => $"{d.SourceSystem},{d.DealsBooked}"))
+    );
+    var script = Path.Combine(_scriptDir, "generate_source_system_chart.py");
+    var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Python failed to start");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
 
-In your Razor page (e.g. `Pages/Index.razor`):
+// 4) PythonScripts/generate_source_system_chart.py
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
 
-```razor
-<GraphViewer GraphId="market_events"
-             Title="Market Events (Last 30 Days)" />
-```
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    df.plot(x='SourceSystem', y='DealsBooked', kind='bar', figsize=(8,5))
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(outp)
 
----
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("Usage: python generate_source_system_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
 
-Now rebuild and:
-
-* Your worker will generate `market_events_*.png` every cycle.
-* It updates `metadata.json` under the key `"market_events"`.
-* Your `<GraphViewer>` picks it up and shows it just like the others.
-
-That’s all—new graph integrated end-to-end, fully modular!
+// 5) UI:
+<GraphViewer GraphId="source_system_contracts" Title="OTC Deals by Source System (Last 7 Days)" />
