@@ -1,87 +1,75 @@
-**Configuring Razor Pages root**
+@page "/chart"
+@inject HttpClient Http
 
-The user mentions that their Blazor project has a "Pages" folder within the "Components" folder, which is causing issues with the default structure. They're asking if they can change the fallback for Razor Pages. To help them, I need to guide them on configuring the app to look for a host file in their custom folder structure instead of searching for it at the default root location. I'll explain how to adjust the Razor Pages root and fallback paths as needed.
+<h3>Product Trades in Last 7 Days</h3>
 
-**Configuring Razor Pages directory**
-
-To solve this, the user can override the default Razor Pages directory structure by setting the `RootDirectory` for Razor Pages. I’d suggest adding this in `Program.cs`:
-
-```csharp
-builder.Services.AddRazorPages(options => {
-    options.RootDirectory = "/Components/Pages";
-});
-```
-
-Then, for fallback, update it to explicitly reference the page’s location like this:
-
-```csharp
-app.MapFallbackToPage("/Components/Pages/_Host");
-```
-
-This way, the app will recognize the custom folder structure while using the fallback.
-
-
-Thought for 10 seconds
-
-
-You absolutely can keep your `.cshtml` files under `Components/Pages` – you just have to tell the Razor-Pages system where to look. By default it only serves files in the `/Pages` folder, so your `_Host.cshtml` was “invisible.” Here are two ways to fix it without moving files:
-
----
-
-## 1) Reconfigure Razor-Pages’ root directory
-
-In your **Program.cs** (Blazor Server project) do:
-
-```csharp
-using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using StarTrends.Services;
-
-var builder = WebApplication.CreateBuilder(args);
-
-// 1) Add Razor-Pages, telling it that pages live under /Components/Pages
-builder.Services.AddRazorPages(options =>
+@if (metadata == null)
 {
-    options.RootDirectory = "/Components/Pages";
-});
-builder.Services.AddServerSideBlazor();
+    <p>Loading chart…</p>
+}
+else
+{
+    <img src="@metadata.ImageUrl" alt="Product Trades Chart"
+         style="max-width:100%; height:auto;" />
+    <p>
+      <small>Last updated:
+        @metadata.LastUpdated.ToLocalTime().ToString("f")
+      </small>
+    </p>
+    <button class="btn btn-outline-primary" @onclick="Refresh">
+      @(isRefreshing ? "Refreshing…" : "Refresh")
+    </button>
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger">@errorMessage</div>
+    }
+}
 
-// 2) Your other services
-builder.Services.AddScoped<IOracleDataService, OracleDataService>();
-builder.Services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
+@code {
+    private ChartMeta metadata;
+    private bool isRefreshing;
+    private string errorMessage;
 
-var app = builder.Build();
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMetadata();
+    }
 
-app.UseStaticFiles();
-app.UseRouting();
+    private async Task LoadMetadata()
+    {
+        try
+        {
+            metadata = await Http.GetFromJsonAsync<ChartMeta>("charts/metadata.json");
+            errorMessage = null;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Could not load chart: " + ex.Message;
+        }
+    }
 
-// 3) Map everything, same as before
-app.MapRazorPages();
-app.MapBlazorHub();
-app.MapFallbackToPage("/_Host");
+    private async Task Refresh()
+    {
+        isRefreshing = true;
+        try
+        {
+            var resp = await Http.PostAsync("/api/charts/productTrade/refresh", null);
+            resp.EnsureSuccessStatusCode();
+            metadata = await resp.Content.ReadFromJsonAsync<ChartMeta>();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Refresh failed: " + ex.Message;
+        }
+        finally
+        {
+            isRefreshing = false;
+        }
+    }
 
-app.Run();
-```
-
-With that in place, when you request `/` or any client-side route:
-
-1. ASP NET will look for `/Components/Pages/_Host.cshtml`
-2. It finds it, serves it, and bootstraps your `<App>` component
-3. Your Blazor router then kicks in and shows whatever page/component has `@page "/"`
-
----
-
-## 2) Or: map the fallback to the exact physical path
-
-If you’d rather not override the root, you can point the fallback at your custom location:
-
-```csharp
-app.MapFallbackToPage("/Components/Pages/_Host");
-```
-
-…but I strongly recommend **Option 1**, since it means all your other Razor Pages (if any) will also be found automatically under `Components/Pages`.
-
----
-
-Once you’ve done **either** of the above, rebuild & run. Hitting `https://localhost:7287/` will serve your `_Host.cshtml` from `Components/Pages`, and your Blazor UI will come up exactly as before.
+    public class ChartMeta
+    {
+        public string ImageUrl { get; set; }
+        public DateTime LastUpdated { get; set; }
+    }
+}
