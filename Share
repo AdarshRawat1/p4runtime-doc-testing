@@ -1,60 +1,79 @@
-// File: Pages/Index.razor
-@page "/"
-@inject HttpClient Http
+// File: Services/ChartGeneratorService.cs
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;          // <-- changed
+using Microsoft.Extensions.Logging;
+using StarTrends.Models;
 
-<h1>StarTrends Dashboard</h1>
-<p>Below is the latest Product Trades chart:</p>
-
-@if (metadata == null)
+namespace StarTrends.Services
 {
-    <p>Loading chart...</p>
-}
-else
-{
-    <img src="@metadata.ImageUrl" alt="Product Trades Chart" style="max-width:100%; height:auto;" />
-    <p><small>Last updated: @metadata.LastUpdated.ToLocalTime().ToString("f")</small></p>
-    <button class="btn btn-outline-primary" @onclick="RefreshChart" disabled="@isRefreshing">
-        @(isRefreshing ? "Refreshing…" : "Refresh")
-    </button>
-    @if (!string.IsNullOrEmpty(error))
+    public class ChartGeneratorService : IChartGeneratorService
     {
-        <div class="alert alert-danger mt-2">@error</div>
-    }
-}
+        private readonly ILogger<ChartGeneratorService> _logger;
+        private readonly string _scriptsFolder;
+        private readonly string _chartsFolder;
 
-@code {
-    private ChartMeta metadata;
-    private bool isRefreshing;
-    private string error;
-
-    protected override async Task OnInitializedAsync()
-    {
-        metadata = await Http.GetFromJsonAsync<ChartMeta>("/api/charts/metadata");
-    }
-
-    private async Task RefreshChart()
-    {
-        isRefreshing = true;
-        error = null;
-        try
+        public ChartGeneratorService(
+            ILogger<ChartGeneratorService> logger,
+            IConfiguration config,
+            IHostEnvironment env)               // <-- changed
         {
-            var resp = await Http.PostAsync("/api/charts/productTrade/refresh", null);
-            resp.EnsureSuccessStatusCode();
-            metadata = await resp.Content.ReadFromJsonAsync<ChartMeta>();
-        }
-        catch (Exception ex)
-        {
-            error = "Could not refresh chart: " + ex.Message;
-        }
-        finally
-        {
-            isRefreshing = false;
-        }
-    }
+            _logger = logger;
 
-    public class ChartMeta
-    {
-        public string ImageUrl { get; set; }
-        public DateTime LastUpdated { get; set; }
+            // PythonScripts lives next to your .csproj
+            _scriptsFolder = Path.Combine(
+                env.ContentRootPath,
+                config["ChartScriptsPath"] ?? "PythonScripts");
+
+            // Charts are served from wwwroot/charts
+            _chartsFolder = Path.Combine(
+                env.ContentRootPath,
+                "wwwroot",
+                config["ChartsOutputPath"] ?? "charts");
+
+            Directory.CreateDirectory(_scriptsFolder);
+            Directory.CreateDirectory(_chartsFolder);
+        }
+
+        public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
+        {
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var csvPath   = Path.Combine(_scriptsFolder, $"product_trades_{timestamp}.csv");
+            var pngPath   = Path.Combine(_chartsFolder,    $"product_trades_{timestamp}.png");
+
+            // 1) Write CSV
+            await using (var writer = new StreamWriter(csvPath))
+            {
+                writer.WriteLine("ProductTypeName,TotalTrades");
+                foreach (var item in data)
+                    await writer.WriteLineAsync($"{item.ProductTypeName},{item.TotalTrades}");
+            }
+
+            // 2) Call the Python script
+            var scriptFile = Path.Combine(_scriptsFolder, "generate_product_trade_chart.py");
+            if (!File.Exists(scriptFile))
+                throw new FileNotFoundException($"Chart script not found at {scriptFile}");
+
+            var psi = new ProcessStartInfo
+            {
+                FileName            = "python",
+                Arguments           = $"\"{scriptFile}\" \"{csvPath}\" \"{pngPath}\"",
+                RedirectStandardError = true,
+                UseShellExecute     = false
+            };
+
+            using var proc = Process.Start(psi)
+                             ?? throw new InvalidOperationException("Failed to launch Python.");
+            var err = await proc.StandardError.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+
+            if (!string.IsNullOrEmpty(err))
+                _logger.LogError("Python error: {Error}", err);
+
+            return $"/charts/{Path.GetFileName(pngPath)}";
+        }
     }
 }
