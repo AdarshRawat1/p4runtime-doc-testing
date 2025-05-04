@@ -1,108 +1,60 @@
-**Configuring Blazor project**
+// File: Pages/Index.razor
+@page "/"
+@inject HttpClient Http
 
-The user is asking for the configuration details for the StarTrends Blazor project. They want to reference only images (such as pre-rendered PNGs) and make it functional. This likely involves modifying the `Program.cs` and possibly the `appsettings.json` to set up static file serving and minimal API endpoints for metadata.
+<h1>StarTrends Dashboard</h1>
+<p>Below is the latest Product Trades chart:</p>
 
-I’ll need to break down the changes in `Program.cs` to register services like `ChartGeneratorService` and `OracleDataService`. I'll keep it simple and provide relevant code snippets for the setup.
-
-
-Thought for 6 seconds
-
-
-Here’s the minimal setup for your **StarTrends** Blazor project so that it:
-
-* Serves only the pre-rendered PNGs
-* Exposes a metadata endpoint and an on-demand refresh endpoint
-* Remains functional and lean
-
----
-
-### 1) appsettings.json (in your Blazor project root)
-
-Place this next to your `.csproj` and set **Copy to Output Directory → Copy if newer**:
-
-```json
+@if (metadata == null)
 {
-  "ConnectionStrings": {
-    "OracleDb": "User Id=...;Password=...;Data Source=..."
-  },
-  "ChartScriptsPath": "PythonScripts",
-  "ChartsOutputPath": "charts"
+    <p>Loading chart...</p>
 }
-```
-
-You don’t strictly need `ChartUpdateIntervalMinutes` here since the worker handles scheduling.
-
----
-
-### 2) Program.cs
-
-Replace the contents of your Blazor app’s `Program.cs` with:
-
-```csharp
-using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using StarTrends.Services;
-
-var builder = WebApplication.CreateBuilder(args);
-
-// Register your services
-builder.Services.AddScoped<IOracleDataService, OracleDataService>();
-builder.Services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
-
-// Add Blazor Server services (or WebAssembly if that’s your flavor)
-builder.Services.AddRazorPages();
-builder.Services.AddServerSideBlazor();
-
-var app = builder.Build();
-
-// Serve wwwroot (including /charts/*.png and metadata.json)
-app.UseStaticFiles();
-
-app.MapBlazorHub();
-app.MapFallbackToPage("/_Host");
-
-// Minimal API for chart metadata
-app.MapGet("/api/charts/metadata", () =>
-    Results.File("charts/metadata.json", "application/json"));
-
-// On-demand refresh endpoint
-app.MapPost("/api/charts/{chartId}/refresh",
-    async (string chartId,
-           IOracleDataService oracle,
-           IChartGeneratorService chartGen) =>
+else
+{
+    <img src="@metadata.ImageUrl" alt="Product Trades Chart" style="max-width:100%; height:auto;" />
+    <p><small>Last updated: @metadata.LastUpdated.ToLocalTime().ToString("f")</small></p>
+    <button class="btn btn-outline-primary" @onclick="RefreshChart" disabled="@isRefreshing">
+        @(isRefreshing ? "Refreshing…" : "Refresh")
+    </button>
+    @if (!string.IsNullOrEmpty(error))
     {
-        if (chartId != "productTrade")
-            return Results.NotFound();
+        <div class="alert alert-danger mt-2">@error</div>
+    }
+}
 
-        var data = await oracle.GetProductTradeCountsAsync(DateTime.Now.AddDays(-7));
-        var url  = await chartGen.GenerateProductTradeChartAsync(data);
-        return Results.Ok(new { ImageUrl = url, LastUpdated = DateTime.UtcNow });
-    });
+@code {
+    private ChartMeta metadata;
+    private bool isRefreshing;
+    private string error;
 
-app.Run();
-```
+    protected override async Task OnInitializedAsync()
+    {
+        metadata = await Http.GetFromJsonAsync<ChartMeta>("/api/charts/metadata");
+    }
 
-**What this does:**
+    private async Task RefreshChart()
+    {
+        isRefreshing = true;
+        error = null;
+        try
+        {
+            var resp = await Http.PostAsync("/api/charts/productTrade/refresh", null);
+            resp.EnsureSuccessStatusCode();
+            metadata = await resp.Content.ReadFromJsonAsync<ChartMeta>();
+        }
+        catch (Exception ex)
+        {
+            error = "Could not refresh chart: " + ex.Message;
+        }
+        finally
+        {
+            isRefreshing = false;
+        }
+    }
 
-* **Static files**: `wwwroot/charts/*.png` and `wwwroot/charts/metadata.json` are served automatically.
-* **GET /api/charts/metadata**: returns the JSON you wrote out in the worker.
-* **POST /api/charts/productTrade/refresh**: regenerates just that one PNG on demand, and returns its URL + timestamp.
-
----
-
-### 3) Folder layout
-
-* **wwwroot/charts/**
-
-  * Your worker will keep `product_trade_{timestamp}.png` files here plus `metadata.json`.
-* **PythonScripts/**
-
-  * Contains your `.py` scripts, if you still want back-end refresh support.
-
-When a user hits your Blazor page, it only ever does:
-
-1. A single GET `/api/charts/metadata` (fast—metadata.json is tiny).
-2. Renders `<img src="…png" />` immediately.
-
-No heavy DB/python work on-demand unless they explicitly click **Refresh**.
+    public class ChartMeta
+    {
+        public string ImageUrl { get; set; }
+        public DateTime LastUpdated { get; set; }
+    }
+}
