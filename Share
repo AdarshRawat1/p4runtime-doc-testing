@@ -1,83 +1,67 @@
-// ChartGeneratorService.cs
-using System.Diagnostics;
-using Microsoft.Extensions.Configuration;
+Thought for a couple of seconds
+
+
+When you moved to the “minimal API” style, you most likely removed the calls that wire up Razor Pages, so the router no longer knows about your `_Host.cshtml`. You need both:
+
+1. **AddRazorPages()** in the DI setup
+2. **MapRazorPages()** (or `MapFallbackToPage`) in the endpoint routing
+
+Here’s a drop-in **Program.cs** for your **StarTrends** (Blazor Server) app that will restore the fallback:
+
+```csharp
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using StarTrends.Models;
+using StarTrends.Services;
 
-namespace StarTrends.Services
+var builder = WebApplication.CreateBuilder(args);
+
+// 1) Register Razor Pages & Blazor Server
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+
+// 2) Register your data/chart services
+builder.Services.AddScoped<IOracleDataService, OracleDataService>();
+builder.Services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
+
+var app = builder.Build();
+
+// 3) Standard middleware
+if (!app.Environment.IsDevelopment())
 {
-    public class ChartGeneratorService : IChartGeneratorService
-    {
-        private readonly ILogger<ChartGeneratorService> _logger;
-        private readonly string _scriptsFolder;
-        private readonly string _csvFolder;      // ← new
-        private readonly string _chartsFolder;
-
-        public ChartGeneratorService(
-            ILogger<ChartGeneratorService> logger,
-            IConfiguration        config,
-            IHostEnvironment      env)
-        {
-            _logger = logger;
-
-            // where your .py lives
-            _scriptsFolder = Path.Combine(
-                env.ContentRootPath,
-                config["ChartScriptsPath"] ?? "PythonScripts");
-
-            // NEW: where to dump CSVs
-            _csvFolder = Path.Combine(
-                env.ContentRootPath,
-                config["CsvOutputPath"] ?? "chart_data");
-
-            // where to put PNGs
-            _chartsFolder = Path.Combine(
-                env.ContentRootPath,
-                "wwwroot",
-                config["ChartsOutputPath"] ?? "charts");
-
-            Directory.CreateDirectory(_scriptsFolder);
-            Directory.CreateDirectory(_csvFolder);    // ← ensure it exists
-            Directory.CreateDirectory(_chartsFolder);
-        }
-
-        public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
-        {
-            var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-
-            // CSV now lives in its own folder
-            var csvPath = Path.Combine(_csvFolder, $"product_trades_{ts}.csv");
-            var pngPath = Path.Combine(_chartsFolder, $"product_trades_{ts}.png");
-
-            // 1) Write CSV
-            await using (var w = new StreamWriter(csvPath))
-            {
-                await w.WriteLineAsync("ProductTypeName,TotalTrades");
-                foreach (var item in data)
-                    await w.WriteLineAsync($"{item.ProductTypeName},{item.TotalTrades}");
-            }
-
-            // 2) Call Python
-            var script = Path.Combine(_scriptsFolder, "generate_product_trade_chart.py");
-            var psi = new ProcessStartInfo
-            {
-                FileName              = "python",
-                Arguments             = $"\"{script}\" \"{csvPath}\" \"{pngPath}\"",
-                RedirectStandardError = true,
-                UseShellExecute       = false
-            };
-
-            using var proc = Process.Start(psi)
-                           ?? throw new InvalidOperationException("Cannot start Python");
-            var err = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-            if (!string.IsNullOrEmpty(err))
-                _logger.LogError(err);
-
-            // 3) Return web‐path for the PNG
-            return $"/charts/{Path.GetFileName(pngPath)}";
-        }
-    }
+    app.UseExceptionHandler("/Error");
 }
+app.UseStaticFiles();
+app.UseRouting();
 
+// 4) Map endpoints
+app.MapRazorPages();            // <— this makes /Pages/*.cshtml discoverable
+app.MapBlazorHub();             // <— Blazor Server SignalR hub
+app.MapFallbackToPage("/_Host"); // <— any other URL falls back to Pages/_Host.cshtml
+
+app.Run();
+```
+
+**Check your `_Host.cshtml`** lives under **Pages/** and begins with `@page "/"`, for example:
+
+```cshtml
+@page "/"
+@namespace StarTrends.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <base href="~/" />
+  <title>StarTrends</title>
+  <link href="css/site.css" rel="stylesheet" />
+</head>
+<body>
+  <component type="typeof(App)" render-mode="ServerPrerendered" />
+  <script src="_framework/blazor.server.js"></script>
+</body>
+</html>
+```
+
+Once you restore `AddRazorPages()` and `MapRazorPages()` (plus the `MapFallbackToPage`), your root URL (`/`) and any other client‐side route will correctly render your Blazor app instead of throwing the fallback‐endpoint error.
