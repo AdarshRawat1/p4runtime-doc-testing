@@ -1,6 +1,11 @@
 Thought for a second
 
  _log.LogInformation("=== Starting location_deals update at {Time} ===", DateTime.UtcNow);
+_log.LogInformation("=== Update cycle complete. Next run in {Interval} minutes ===", 
+                                 _interval.TotalMinutes);
+ _log.LogInformation("Wrote location_deals.png → {Url}", locUrl);
+_log.LogInformation("Wrote product_trades.png → {Url}", tradeUrl);
+
 Here’s the fully-aliased SQL for your three-axis chart. Just drop this into your C# string and bind `:fromDate` as before:
 
 ```sql
