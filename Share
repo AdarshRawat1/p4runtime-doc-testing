@@ -1,70 +1,71 @@
-@page "/"
-@inject HttpClient Http
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using StarTrends.Models;
 
-<h3>Product Trades in Last 7 Days</h3>
-
-@if (meta is null)
+namespace StarTrends.Services
 {
-    <p>Loading chart…</p>
-}
-else
-{
-    <img src="@meta.ImageUrl" alt="Trades chart" style="max-width:100%; height:auto;" />
-    <p>
-      <small>Last updated: @meta.LastUpdated.ToLocalTime().ToString("f")</small>
-    </p>
-    <button class="btn btn-outline-primary" @onclick="Refresh" disabled="@loading">
-      @(loading ? "Refreshing…" : "Refresh")
-    </button>
-    @if (!string.IsNullOrEmpty(error))
+    public class ChartGeneratorService : IChartGeneratorService
     {
-        <div class="alert alert-danger mt-2">@error</div>
-    }
-}
+        private readonly ILogger<ChartGeneratorService> _log;
+        private readonly string _scriptDir;
+        private readonly string _csvDir;
+        private readonly string _chartDir;
+        private const string LatestFileName = "product_trades_latest.png";
 
-@code {
-    private ChartMeta meta;
-    private bool loading;
-    private string error;
+        public ChartGeneratorService(
+            ILogger<ChartGeneratorService> log,
+            IConfiguration config,
+            IHostEnvironment env)
+        {
+            _log       = log;
+            _scriptDir = Path.Combine(env.ContentRootPath, config["ChartScriptsPath"]);
+            _csvDir    = Path.Combine(env.ContentRootPath, config["CsvOutputPath"]);
+            _chartDir  = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"]);
 
-    protected override async Task OnInitializedAsync()
-        => await LoadMetadata();
+            Directory.CreateDirectory(_scriptDir);
+            Directory.CreateDirectory(_csvDir);
+            Directory.CreateDirectory(_chartDir);
+        }
 
-    private async Task LoadMetadata()
-    {
-        try
+        public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
         {
-            meta = await Http.GetFromJsonAsync<ChartMeta>("charts/metadata.json");
-            error = null;
-        }
-        catch (Exception ex)
-        {
-            error = $"Couldn’t load chart: {ex.Message}";
-        }
-    }
+            // write CSV for traceability
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var csvPath   = Path.Combine(_csvDir, $"product_trades_{timestamp}.csv");
+            await File.WriteAllTextAsync(csvPath,
+                "ProductTypeName,TotalTrades\n" +
+                string.Join("\n", data.Select(d => $"{d.ProductTypeName},{d.TotalTrades}"))
+            );
 
-    private async Task Refresh()
-    {
-        loading = true;
-        try
-        {
-            var resp = await Http.PostAsync("/api/charts/productTrade/refresh", null);
-            resp.EnsureSuccessStatusCode();
-            meta = await resp.Content.ReadFromJsonAsync<ChartMeta>();
-        }
-        catch (Exception ex)
-        {
-            error = $"Refresh failed: {ex.Message}";
-        }
-        finally
-        {
-            loading = false;
-        }
-    }
+            // generate PNG
+            var pngPath  = Path.Combine(_chartDir, $"product_trades_{timestamp}.png");
+            var script   = Path.Combine(_scriptDir, "generate_product_trade_chart.py");
+            if (!File.Exists(script))
+                throw new FileNotFoundException("Chart script not found", script);
 
-    class ChartMeta
-    {
-        public string ImageUrl { get; set; }
-        public DateTime LastUpdated { get; set; }
+            var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+            {
+                RedirectStandardError = true,
+                UseShellExecute       = false
+            };
+            using var proc = Process.Start(psi)
+                          ?? throw new InvalidOperationException("Failed to start Python process");
+            var err = await proc.StandardError.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+            if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
+
+            // update the static 'latest' file
+            var latestPath = Path.Combine(_chartDir, LatestFileName);
+            File.Copy(pngPath, latestPath, overwrite: true);
+
+            // always return the same URL
+            return $"/charts/{LatestFileName}";
+        }
     }
 }
