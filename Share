@@ -1,48 +1,8 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Hosting;
-using StarTrends.Services;
-
-public class ChartUpdaterWorker : BackgroundService
 {
-    private readonly IOracleDataService _oracle;
-    private readonly IChartGeneratorService _chartGen;
-    private readonly string _metaPath;
-    private readonly TimeSpan _interval;
-
-    public ChartUpdaterWorker(
-        IOracleDataService oracle,
-        IChartGeneratorService chartGen,
-        IConfiguration config,
-        IWebHostEnvironment env)
-    {
-        _oracle    = oracle;
-        _chartGen  = chartGen;
-        _interval  = TimeSpan.FromMinutes(config.GetValue<int>("ChartUpdateIntervalMinutes", 5));
-        _metaPath  = Path.Combine(env.WebRootPath, "charts", "metadata.json");
-        Directory.CreateDirectory(Path.GetDirectoryName(_metaPath)!);
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            // 1) Fetch & regenerate all charts
-            var meta = new Dictionary<string, object>();
-            var data = await _oracle.GetProductTradeCountsAsync(DateTime.Now.AddDays(-7));
-            var url  = await _chartGen.GenerateProductTradeChartAsync(data);
-            meta["productTrade"] = new { ImageUrl = url, LastUpdated = DateTime.UtcNow };
-
-            // 2) Write metadata
-            await File.WriteAllTextAsync(_metaPath,
-                JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
-
-            // 3) Wait before next cycle
-            await Task.Delay(_interval, ct);
-        }
-    }
+  "ConnectionStrings": {
+    "OracleDb": "User Id=...;Password=...;Data Source=..."
+  },
+  "ChartScriptsPath": "PythonScripts",
+  "ChartsOutputPath": "charts",
+  "ChartUpdateIntervalMinutes": 5
 }
