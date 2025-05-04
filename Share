@@ -1,93 +1,243 @@
-Thought for a second
+Thought for a couple of seconds
 
- _log.LogInformation("=== Starting location_deals update at {Time} ===", DateTime.UtcNow);
-_log.LogInformation("=== Update cycle complete. Next run in {Interval} minutes ===", 
-                                 _interval.TotalMinutes);
- _log.LogInformation("Wrote location_deals.png → {Url}", locUrl);
-_log.LogInformation("Wrote product_trades.png → {Url}", tradeUrl);
 
-Here’s the fully-aliased SQL for your three-axis chart. Just drop this into your C# string and bind `:fromDate` as before:
+Below is everything you need to drop into your solution to add a **“Market Events (Last 30 Days)”** chart in exactly the same modular way as your others. You’ll end up with:
 
-```sql
-WITH selection AS (
-  SELECT 
-    wrk.mo_loc_cod           AS loc_cod,
-    COUNT(con.con_no)        AS total_deals,
-    DECODE(
-      con.prd_typ_cod,
-      'IR1','IR Swap (Fx/Fl)',
-      'IR2','IR Swap (IMM)',
-      'IR3','IR Swap (Fl/Fl)',
-      'CC1','CCY (Fx/Fl)',
-      'CC2','CCY (Fl/Fl)',
-      'CC3','CCY (Fx/Fx)',
-      'FRA','FRA',
-      'CAP','Cap',
-      'FLR','Floor',
-      'CFS','Cap/Floor Straddle',
-      'COL','Cap/Floor Collar',
-      'OSP','Swaption Payer',
-      'OSR','Swaption Receiver',
-      'OSS','Swaption Straddle',
-      'DFX','Deposit (Fixed)',
-      'DFL','Deposit (Float)',
-      'CSH','Cashflow',
-      'BOC','Bond Option Call',
-      'BOP','Bond Option Put',
-      'BOS','Bond Option Straddle',
-      'BME','Container BME',
-      'IL1','Inflation swap (In/Fx)',
-      'IL2','Inflation swap (In/Fl)',
-      'IL3','Inflation Fixing Lock (In)',
-      con.prd_typ_cod
-    )                        AS prd_typ_name
-  FROM star_contract PARTITION(product_oth) con
-  INNER JOIN star_workflow         wrk
-    ON con.con_no = wrk.con_no
-  WHERE con.inp_dt >= :fromDate
-    AND con.ptf_no IN (
-      SELECT ptf_no 
-      FROM crds.ptf 
-      WHERE mkp_cod = 'BNAB'
-        AND loc_cod = 'PAR'
-    )
-    AND con.prd_typ_cod NOT LIKE 'FX_'
-  GROUP BY
-    wrk.mo_loc_cod,
-    con.prd_typ_cod
-),
-locations AS (
-  SELECT DISTINCT loc_cod
-  FROM selection
-),
-otc_prods AS (
-  SELECT DISTINCT prd_typ_name
-  FROM selection
-)
-SELECT
-  grid.loc_cod      AS loc_cod,
-  NVL(sel.total_deals, 0)  AS total_deals,
-  grid.prd_typ_name AS prd_typ_name
-FROM (
-  SELECT
-    l.loc_cod      AS loc_cod,
-    p.prd_typ_name AS prd_typ_name
-  FROM locations l
-  CROSS JOIN otc_prods p
-) grid
-LEFT JOIN selection sel
-  ON sel.loc_cod      = grid.loc_cod
- AND sel.prd_typ_name = grid.prd_typ_name
-ORDER BY
-  grid.loc_cod,
-  grid.prd_typ_name;
-```
+1. A **model**
+2. A **DAL** method
+3. A **ChartGeneratorService** extension
+4. A **Python script**
+5. Two lines in your **ChartUpdaterWorker**
+6. A single `<GraphViewer>` in your Razor page
 
-Just use this string for your `OracleCommand.CommandText`, add the parameter:
+---
+
+### 1) Model
 
 ```csharp
-cmd.CommandText = @"<the SQL above>";
-cmd.Parameters.Add(new OracleParameter("fromDate", fromDate));
+// File: Models/MarketEventCount.cs
+namespace StarTrends.Models
+{
+    public class MarketEventCount
+    {
+        public string MarketEventName { get; set; }
+        public int MEVS { get; set; }
+    }
+}
 ```
 
-That will eliminate the “column ambiguous” error and return exactly the grid of `loc_cod`, `total_deals`, and `prd_typ_name` for your chart.
+---
+
+### 2) OracleDataService
+
+**Interface** update:
+
+```csharp
+// IOracleDataService.cs
+using StarTrends.Models;
+
+public interface IOracleDataService
+{
+    // …existing…
+    Task<IEnumerable<MarketEventCount>> GetMarketEventCountsAsync(DateTime fromDate);
+}
+```
+
+**Implementation** (with fully‐aliased SQL):
+
+```csharp
+// OracleDataService.cs
+using Oracle.ManagedDataAccess.Client;
+using StarTrends.Models;
+
+public async Task<IEnumerable<MarketEventCount>> GetMarketEventCountsAsync(DateTime fromDate)
+{
+    var list = new List<MarketEventCount>();
+    const string sql = @"
+WITH clearing AS (
+  SELECT m.con_no, c.clr_org
+  FROM star_mkt_ops m
+  JOIN star_clearing c ON c.con_no = m.con_no
+  WHERE m.mkt_evt_type = 'RPTY'
+    AND m.mev_sub_type = 'UNS'
+    AND m.mod_dt >= :fromDate
+    AND m.status <> 'PROP'
+    AND m.mkt_evt_type <> 'UNDO'
+),
+events AS (
+  SELECT 
+    a.mkt_event_id,
+    CASE
+      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='PNV'
+        THEN 'Partial Remaining Party'
+      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
+        AND a.con_no IN (SELECT con_no FROM clearing WHERE clr_org=16582)
+        THEN 'LCH. Clearnet LTD'
+      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
+        AND a.con_no IN (SELECT con_no FROM clearing WHERE clr_org=226198)
+        THEN 'Japan Securities Clearing Corp'
+      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
+        AND a.con_no IN (SELECT con_no FROM clearing WHERE clr_org=7048)
+        THEN 'Chicago Mercantile Exchange'
+      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
+        AND a.con_no IN (SELECT con_no FROM clearing WHERE clr_org=653)
+        THEN 'Banco Central Do Brasil'
+      WHEN a.mkt_evt_type='RPTY' AND a.mev_sub_type='UNS'
+        THEN 'Remaining Party'
+      WHEN a.mkt_evt_type='UWIN' THEN 'Unwind'
+      WHEN a.mkt_evt_type='STIN' THEN 'Step In'
+      WHEN a.mkt_evt_type='SOUT' THEN 'Step Out'
+      WHEN a.mkt_evt_type='REST' THEN 'Restructure'
+      WHEN a.mkt_evt_type='PTFR' THEN 'Portfolio Reassignment'
+      WHEN a.mkt_evt_type='EXP'  THEN 'Expiry'
+      WHEN a.mkt_evt_type='EP'   THEN 'Physical exercise'
+      WHEN a.mkt_evt_type='EC'   THEN 'Cash exercise'
+      WHEN a.mkt_evt_type='DEL'  THEN 'Delete'
+      WHEN a.mkt_evt_type='EXC'  THEN 'Exercise'
+      ELSE a.mkt_evt_type
+    END AS mkt_evt_name,
+    a.con_no
+  FROM star_mkt_ops a
+  WHERE a.mod_dt >= :fromDate
+    AND a.status <> 'PROP'
+    AND a.mkt_evt_type <> 'UNDO'
+)
+SELECT
+  m.mkt_evt_name        AS MarketEventName,
+  COUNT(m.mkt_event_id) AS MEVS
+FROM events m
+JOIN star_contract PARTITION(product_oth) c
+  ON c.con_no = m.con_no
+GROUP BY m.mkt_evt_name
+ORDER BY MEVS DESC";
+
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add(new OracleParameter("fromDate", fromDate));
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        list.Add(new MarketEventCount
+        {
+            MarketEventName = reader.GetString(0),
+            MEVS            = reader.GetInt32(1)
+        });
+    }
+    return list;
+}
+```
+
+---
+
+### 3) ChartGeneratorService
+
+**Interface**:
+
+```csharp
+// IChartGeneratorService.cs
+using StarTrends.Models;
+
+public interface IChartGeneratorService
+{
+    // …existing…
+    Task<string> GenerateMarketEventChartAsync(IEnumerable<MarketEventCount> data);
+}
+```
+
+**Implementation**:
+
+```csharp
+// ChartGeneratorService.cs
+using System.Diagnostics;
+using StarTrends.Models;
+
+public async Task<string> GenerateMarketEventChartAsync(IEnumerable<MarketEventCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir,   $"market_events_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"market_events_{ts}.png");
+
+    await File.WriteAllTextAsync(csvPath,
+        "MarketEventName,MEVS\n" +
+        string.Join("\n", data.Select(d => $"{d.MarketEventName},{d.MEVS}"))
+    );
+
+    var script = Path.Combine(_scriptDir, "generate_market_event_chart.py");
+    var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Python failed to start");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err))
+        _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+```
+
+---
+
+### 4) Python script
+
+```python
+# File: PythonScripts/generate_market_event_chart.py
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    df.plot(x='MarketEventName', y='MEVS', kind='bar', figsize=(10,6))
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("Usage: python generate_market_event_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+---
+
+### 5) ChartUpdaterWorker
+
+Inside your `ExecuteAsync` **after** the other charts:
+
+```csharp
+// Market events (last 30 days)
+var meData = await oracle.GetMarketEventCountsAsync(DateTime.UtcNow.AddDays(-30));
+var meUrl  = await chartGen.GenerateMarketEventChartAsync(meData);
+metadata["market_events"] = new { ImageUrl = meUrl, LastUpdated = DateTime.UtcNow };
+
+// prune old files
+CleanupOldFiles(_chartDir, "market_events_*.png", MaxKeep);
+CleanupOldFiles(_csvDir,   "market_events_*.csv", MaxKeep);
+```
+
+---
+
+### 6) UI
+
+In your Razor page (e.g. `Pages/Index.razor`):
+
+```razor
+<GraphViewer GraphId="market_events"
+             Title="Market Events (Last 30 Days)" />
+```
+
+---
+
+Now rebuild and:
+
+* Your worker will generate `market_events_*.png` every cycle.
+* It updates `metadata.json` under the key `"market_events"`.
+* Your `<GraphViewer>` picks it up and shows it just like the others.
+
+That’s all—new graph integrated end-to-end, fully modular!
