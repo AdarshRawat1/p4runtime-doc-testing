@@ -1,5 +1,68 @@
-builder.Services.AddScoped(sp =>
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using StarTrends.Services;
+
+public class ChartUpdaterWorker : BackgroundService
 {
-    var nav = sp.GetRequiredService<NavigationManager>();
-    return new HttpClient { BaseAddress = new Uri(nav.BaseUri) };
-});
+    private readonly IServiceScopeFactory _scopes;
+    private readonly ILogger<ChartUpdaterWorker> _log;
+    private readonly string _metaPath;
+    private readonly TimeSpan _interval;
+
+    public ChartUpdaterWorker(
+        IServiceScopeFactory scopes,
+        IConfiguration config,
+        IHostEnvironment env,
+        ILogger<ChartUpdaterWorker> log)
+    {
+        _scopes   = scopes;
+        _log      = log;
+        _interval = TimeSpan.FromMinutes(config.GetValue<int>("ChartUpdateIntervalMinutes", 5));
+
+        var charts = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"] ?? "charts");
+        Directory.CreateDirectory(charts);
+        _metaPath = Path.Combine(charts, "metadata.json");
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                _log.LogInformation("Starting chart update…");
+                using var scope = _scopes.CreateScope();
+                var oracle = scope.ServiceProvider.GetRequiredService<IOracleDataService>();
+                var gen    = scope.ServiceProvider.GetRequiredService<IChartGeneratorService>();
+
+                var data   = await oracle.GetProductTradeCountsAsync(DateTime.Now.AddDays(-7));
+                var url    = await gen.GenerateProductTradeChartAsync(data);
+
+                var wrapper = new Dictionary<string, object>
+                {
+                    ["product_trades"] = new { ImageUrl = url, LastUpdated = DateTime.UtcNow }
+                };
+
+                var json = JsonSerializer.Serialize(wrapper, new JsonSerializerOptions { WriteIndented = true });
+                await File.WriteAllTextAsync(_metaPath, json, ct);
+
+                _log.LogInformation("Chart metadata updated: {Url}", url);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Chart update failed");
+            }
+
+            await Task.Delay(_interval, ct);
+        }
+    }
+}
+
+
+
+
+
+
+
