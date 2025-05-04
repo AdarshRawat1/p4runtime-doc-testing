@@ -1,68 +1,165 @@
+// File: Services/ChartGeneratorService.cs
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using StarTrends.Models;
+
+namespace StarTrends.Services
+{
+    public class ChartGeneratorService : IChartGeneratorService
+    {
+        private readonly ILogger<ChartGeneratorService> _log;
+        private readonly string _scriptDir;
+        private readonly string _csvDir;
+        private readonly string _chartDir;
+
+        public ChartGeneratorService(
+            ILogger<ChartGeneratorService> log,
+            IConfiguration config,
+            IHostEnvironment env)
+        {
+            _log       = log;
+            _scriptDir = Path.Combine(env.ContentRootPath, config["ChartScriptsPath"]);
+            _csvDir    = Path.Combine(env.ContentRootPath, config["CsvOutputPath"]);
+            _chartDir  = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"]);
+
+            Directory.CreateDirectory(_scriptDir);
+            Directory.CreateDirectory(_csvDir);
+            Directory.CreateDirectory(_chartDir);
+        }
+
+        public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
+        {
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var csvPath   = Path.Combine(_csvDir,   $"product_trades_{timestamp}.csv");
+            var pngPath   = Path.Combine(_chartDir, $"product_trades_{timestamp}.png");
+
+            await File.WriteAllTextAsync(csvPath,
+                "ProductTypeName,TotalTrades\n" +
+                string.Join("\n", data.Select(d => $"{d.ProductTypeName},{d.TotalTrades}"))
+            );
+
+            var script = Path.Combine(_scriptDir, "generate_product_trade_chart.py");
+            var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+            {
+                RedirectStandardError = true,
+                UseShellExecute       = false
+            };
+
+            using var proc = Process.Start(psi)
+                ?? throw new InvalidOperationException("Could not start Python process");
+
+            var error = await proc.StandardError.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+            if (!string.IsNullOrWhiteSpace(error))
+                _log.LogError(error);
+
+            return $"/charts/{Path.GetFileName(pngPath)}";
+        }
+    }
+}
+
+// File: Workers/ChartUpdaterWorker.cs
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using StarTrends.Services;
 
-public class ChartUpdaterWorker : BackgroundService
+namespace StarTrends.Workers
 {
-    private readonly IServiceScopeFactory _scopes;
-    private readonly ILogger<ChartUpdaterWorker> _log;
-    private readonly string _metaPath;
-    private readonly TimeSpan _interval;
-
-    public ChartUpdaterWorker(
-        IServiceScopeFactory scopes,
-        IConfiguration config,
-        IHostEnvironment env,
-        ILogger<ChartUpdaterWorker> log)
+    public class ChartUpdaterWorker : BackgroundService
     {
-        _scopes   = scopes;
-        _log      = log;
-        _interval = TimeSpan.FromMinutes(config.GetValue<int>("ChartUpdateIntervalMinutes", 5));
+        private readonly IServiceScopeFactory _scopeFactory;
+        private readonly ILogger<ChartUpdaterWorker> _log;
+        private readonly string _chartDir;
+        private readonly string _csvDir;
+        private readonly string _metaPath;
+        private readonly TimeSpan _interval;
+        private const int MaxKeep = 3;
 
-        var charts = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"] ?? "charts");
-        Directory.CreateDirectory(charts);
-        _metaPath = Path.Combine(charts, "metadata.json");
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
+        public ChartUpdaterWorker(
+            IServiceScopeFactory scopeFactory,
+            IConfiguration config,
+            IHostEnvironment env,
+            ILogger<ChartUpdaterWorker> log)
         {
-            try
+            _scopeFactory = scopeFactory;
+            _log          = log;
+            _interval     = TimeSpan.FromMinutes(config.GetValue<int>("ChartUpdateIntervalMinutes", 5));
+
+            _chartDir = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"]);
+            _csvDir   = Path.Combine(env.ContentRootPath,            config["CsvOutputPath"]);
+            Directory.CreateDirectory(_chartDir);
+            Directory.CreateDirectory(_csvDir);
+
+            _metaPath = Path.Combine(_chartDir, "metadata.json");
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            while (!stoppingToken.IsCancellationRequested)
             {
-                _log.LogInformation("Starting chart update…");
-                using var scope = _scopes.CreateScope();
-                var oracle = scope.ServiceProvider.GetRequiredService<IOracleDataService>();
-                var gen    = scope.ServiceProvider.GetRequiredService<IChartGeneratorService>();
-
-                var data   = await oracle.GetProductTradeCountsAsync(DateTime.Now.AddDays(-7));
-                var url    = await gen.GenerateProductTradeChartAsync(data);
-
-                var wrapper = new Dictionary<string, object>
+                try
                 {
-                    ["product_trades"] = new { ImageUrl = url, LastUpdated = DateTime.UtcNow }
-                };
+                    using var scope = _scopeFactory.CreateScope();
+                    var oracle = scope.ServiceProvider.GetRequiredService<IOracleDataService>();
+                    var generator = scope.ServiceProvider.GetRequiredService<IChartGeneratorService>();
 
-                var json = JsonSerializer.Serialize(wrapper, new JsonSerializerOptions { WriteIndented = true });
-                await File.WriteAllTextAsync(_metaPath, json, ct);
+                    var data = await oracle.GetProductTradeCountsAsync(DateTime.UtcNow.AddDays(-7));
+                    var url  = await generator.GenerateProductTradeChartAsync(data);
 
-                _log.LogInformation("Chart metadata updated: {Url}", url);
+                    var metadata = new Dictionary<string, object>
+                    {
+                        ["product_trades"] = new { ImageUrl = url, LastUpdated = DateTime.UtcNow }
+                    };
+
+                    await File.WriteAllTextAsync(
+                        _metaPath,
+                        JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true }),
+                        stoppingToken
+                    );
+
+                    CleanupOldFiles(_chartDir, "product_trades_*.png");
+                    CleanupOldFiles(_csvDir,   "product_trades_*.csv");
+
+                    _log.LogInformation("Chart and metadata updated: {Url}", url);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Error in chart update");
+                }
+
+                await Task.Delay(_interval, stoppingToken);
             }
-            catch (Exception ex)
+        }
+
+        private void CleanupOldFiles(string directory, string pattern)
+        {
+            var files = new DirectoryInfo(directory)
+                .GetFiles(pattern)
+                .OrderByDescending(f => f.CreationTimeUtc)
+                .Skip(MaxKeep);
+
+            foreach (var file in files)
             {
-                _log.LogError(ex, "Chart update failed");
+                try { file.Delete(); }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Failed to delete {File}", file.Name);
+                }
             }
-
-            await Task.Delay(_interval, ct);
         }
     }
 }
-
-
-
-
-
-
-
