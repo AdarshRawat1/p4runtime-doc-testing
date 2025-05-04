@@ -1,88 +1,88 @@
 using System;
-using System.IO;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using StarTrends.Services;
 
-namespace ChartUpdater
+public class ChartUpdaterWorker : BackgroundService
 {
-    public class ChartUpdaterWorker : BackgroundService
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<ChartUpdaterWorker> _logger;
+    private readonly string _metaPath;
+    private readonly TimeSpan _interval;
+
+    public ChartUpdaterWorker(
+        IServiceScopeFactory scopeFactory,
+        IConfiguration        config,
+        IHostEnvironment      env,
+        ILogger<ChartUpdaterWorker> logger)
     {
-        private readonly IOracleDataService _oracle;
-        private readonly IChartGeneratorService _chartGen;
-        private readonly ILogger<ChartUpdaterWorker> _logger;
-        private readonly string _metaPath;
-        private readonly TimeSpan _interval;
+        _scopeFactory = scopeFactory;
+        _logger       = logger;
+        _interval     = TimeSpan.FromMinutes(
+                           config.GetValue<int>("ChartUpdateIntervalMinutes", 5));
 
-        public ChartUpdaterWorker(
-            IOracleDataService oracle,
-            IChartGeneratorService chartGen,
-            IConfiguration config,
-            IHostEnvironment env,
-            ILogger<ChartUpdaterWorker> logger)
+        // Ensure the charts folder exists under wwwroot/charts
+        var chartsFolder = Path.Combine(
+            env.ContentRootPath,
+            "wwwroot",
+            config["ChartsOutputPath"] ?? "charts");
+        Directory.CreateDirectory(chartsFolder);
+
+        _metaPath = Path.Combine(chartsFolder, "metadata.json");
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
         {
-            _oracle   = oracle;
-            _chartGen = chartGen;
-            _logger   = logger;
-
-            _interval = TimeSpan.FromMinutes(
-                config.GetValue<int>("ChartUpdateIntervalMinutes", 5));
-
-            // metadata.json lives under wwwroot/charts
-            var chartsFolder = Path.Combine(
-                env.ContentRootPath,
-                "wwwroot",
-                config["ChartsOutputPath"] ?? "charts");
-            Directory.CreateDirectory(chartsFolder);
-
-            _metaPath = Path.Combine(chartsFolder, "metadata.json");
-        }
-
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            while (!stoppingToken.IsCancellationRequested)
+            try
             {
-                try
+                _logger.LogInformation("⏳ Starting chart update at {time}", DateTime.Now);
+
+                // Create a DI scope
+                using var scope = _scopeFactory.CreateScope();
+
+                // Resolve your scoped services inside the scope
+                var oracle   = scope.ServiceProvider.GetRequiredService<IOracleDataService>();
+                var chartGen = scope.ServiceProvider.GetRequiredService<IChartGeneratorService>();
+
+                // 1) Fetch data
+                var data = await oracle.GetProductTradeCountsAsync(
+                    DateTime.Now.AddDays(-7));
+
+                // 2) Generate chart and get its URL
+                var url = await chartGen.GenerateProductTradeChartAsync(data);
+
+                // 3) Write metadata.json
+                var meta = new Dictionary<string, object>
                 {
-                    _logger.LogInformation("⏳ Starting chart update at {time}", DateTime.Now);
-
-                    // 1) Fetch data
-                    var data = await _oracle.GetProductTradeCountsAsync(
-                        DateTime.Now.AddDays(-7));
-
-                    // 2) Generate chart PNG (and get its public URL)
-                    var url = await _chartGen.GenerateProductTradeChartAsync(data);
-
-                    // 3) Write metadata.json
-                    var meta = new Dictionary<string, object>
+                    ["productTrade"] = new
                     {
-                        ["productTrade"] = new
-                        {
-                            ImageUrl   = url,
-                            LastUpdated = DateTime.UtcNow
-                        }
-                    };
+                        ImageUrl    = url,
+                        LastUpdated = DateTime.UtcNow
+                    }
+                };
 
-                    await File.WriteAllTextAsync(
-                        _metaPath,
-                        JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }),
-                        stoppingToken);
+                await File.WriteAllTextAsync(
+                    _metaPath,
+                    JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }),
+                    stoppingToken);
 
-                    _logger.LogInformation("✅ Chart updated: {url}", url);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "❌ Error during chart update");
-                }
-
-                // wait before next run
-                await Task.Delay(_interval, stoppingToken);
+                _logger.LogInformation("✅ Chart updated: {url}", url);
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error during chart update");
+            }
+
+            await Task.Delay(_interval, stoppingToken);
         }
     }
 }
