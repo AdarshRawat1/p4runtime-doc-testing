@@ -1,103 +1,169 @@
-// File: Services/IChartRefresher.cs
-namespace StarTrends.Services
+// File: Models/LocationDealProductCount.cs
+namespace StarTrends.Models
 {
-    public interface IChartRefresher
+    public class LocationDealProductCount
     {
-        string ChartId { get; }
-        Task<ChartMeta> RefreshAsync();
+        public string LocCod { get; set; }
+        public string ProductTypeName { get; set; }
+        public int TotalDeals { get; set; }
     }
-
-    public record ChartMeta(string ImageUrl, DateTime LastUpdated);
 }
 
-// File: Services/ProductTradesChartRefresher.cs
+// File: Services/IOracleDataService.cs (add method)
 using StarTrends.Models;
 
 namespace StarTrends.Services
 {
-    public class ProductTradesChartRefresher : IChartRefresher
+    public interface IOracleDataService
     {
-        private readonly IOracleDataService _oracle;
-        private readonly IChartGeneratorService _chartGen;
+        Task<IEnumerable<ProductTradeCount>> GetProductTradeCountsAsync(DateTime fromDate);
+        Task<IEnumerable<LocationDealProductCount>> GetLocationDealProductCountsAsync(DateTime fromDate);
+    }
+}
 
-        public string ChartId => "product_trades";
+// File: Services/OracleDataService.cs (implement method)
+using Oracle.ManagedDataAccess.Client;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using StarTrends.Models;
 
-        public ProductTradesChartRefresher(
-            IOracleDataService oracle,
-            IChartGeneratorService chartGen)
+namespace StarTrends.Services
+{
+    public class OracleDataService : IOracleDataService
+    {
+        // existing constructor and GetProductTradeCountsAsync...
+
+        public async Task<IEnumerable<LocationDealProductCount>> GetLocationDealProductCountsAsync(DateTime fromDate)
         {
-            _oracle   = oracle;
-            _chartGen = chartGen;
-        }
-
-        public async Task<ChartMeta> RefreshAsync()
-        {
-            var data = await _oracle.GetProductTradeCountsAsync(DateTime.UtcNow.AddDays(-7));
-            var url  = await _chartGen.GenerateProductTradeChartAsync(data);
-            return new ChartMeta(url, DateTime.UtcNow);
+            var list = new List<LocationDealProductCount>();
+            const string sql = @"
+WITH selection AS (
+  SELECT wrk.mo_loc_cod AS loc_cod,
+         COUNT(con.con_no) AS total,
+         DECODE(con.prd_typ_cod,
+           'IR1','IR Swap (Fx/Fl)', 'IR2','IR Swap (IMM)', 'IR3','IR Swap (Fl/Fl)',
+           'CC1','CCY (Fx/Fl)', 'CC2','CCY (Fl/Fl)', 'CC3','CCY (Fx/Fx)',
+           'FRA','FRA', 'CAP','Cap', 'FLR','Floor', 'CFS','Cap/Floor Straddle',
+           'COL','Cap/Floor Collar', 'OSP','Swaption Payer', 'OSR','Swaption Receiver',
+           'OSS','Swaption Straddle','DFX','Deposit (Fixed)','DFL','Deposit (Float)',
+           'CSH','Cashflow','BOC','Bond Option Call','BOP','Bond Option Put',
+           'BOS','Bond Option Straddle','BME','Container BME',
+           'IL1','Inflation swap (In/Fx)','IL2','Inflation swap (In/Fl)',
+           'IL3','Inflation Fixing Lock (In)', con.prd_typ_cod) AS prd_typ_name
+  FROM star_contract PARTITION(product_oth) con
+  INNER JOIN star_workflow wrk ON con.con_no = wrk.con_no
+  WHERE con.inp_dt > :fromDate
+    AND con.ptf_no IN (
+      SELECT ptf_no FROM crds.ptf WHERE mkp_cod='BNAB' AND loc_cod='PAR')
+    AND prd_typ_cod NOT LIKE 'FX_'
+  GROUP BY wrk.mo_loc_cod, con.prd_typ_cod
+)
+SELECT loc_cod AS LocCod, NVL(total,0) AS TotalDeals, prd_typ_name AS ProductTypeName
+FROM (
+  SELECT DISTINCT loc_cod, prd_typ_name FROM selection
+) grid
+LEFT JOIN selection sel ON sel.loc_cod = grid.loc_cod AND sel.prd_typ_name = grid.prd_typ_name
+ORDER BY grid.loc_cod, grid.prd_typ_name";
+            try
+            {
+                await using var conn = new OracleConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new OracleCommand(sql, conn);
+                cmd.Parameters.Add(new OracleParameter("fromDate", fromDate));
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new LocationDealProductCount
+                    {
+                        LocCod             = reader.GetString(0),
+                        TotalDeals         = reader.GetInt32(1),
+                        ProductTypeName    = reader.GetString(2)
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching location-deals-product counts");
+                throw;
+            }
+            return list;
         }
     }
 }
 
-// File: Controllers/ChartsController.cs
-using Microsoft.AspNetCore.Mvc;
-using StarTrends.Services;
+// File: Services/IChartGeneratorService.cs (add method)
+using StarTrends.Models;
 
-namespace StarTrends.Controllers
+namespace StarTrends.Services
 {
-    [ApiController]
-    [Route("api/charts")]
-    public class ChartsController : ControllerBase
+    public interface IChartGeneratorService
     {
-        private readonly IEnumerable<IChartRefresher> _refreshers;
+        Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data);
+        Task<string> GenerateLocationDealProductChartAsync(IEnumerable<LocationDealProductCount> data);
+    }
+}
 
-        public ChartsController(IEnumerable<IChartRefresher> refreshers)
-        {
-            _refreshers = refreshers;
-        }
+// File: Services/ChartGeneratorService.cs (implement method)
+using System.Diagnostics;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using StarTrends.Models;
 
-        [HttpGet("metadata")]
-        public IActionResult GetMetadata()
-        {
-            var dict = _refreshers.ToDictionary(
-                r => r.ChartId,
-                r => r.RefreshAsync().Result);
-            return Ok(dict);
-        }
+namespace StarTrends.Services
+{
+    public class ChartGeneratorService : IChartGeneratorService
+    {
+        // existing fields and constructor...
 
-        [HttpPost("{chartId}/refresh")]
-        public async Task<IActionResult> Refresh(string chartId)
+        public async Task<string> GenerateLocationDealProductChartAsync(IEnumerable<LocationDealProductCount> data)
         {
-            var refresher = _refreshers.FirstOrDefault(r => r.ChartId == chartId);
-            if (refresher == null)
-                return NotFound();
-            var meta = await refresher.RefreshAsync();
-            return Ok(meta);
+            var ts       = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var csvPath  = Path.Combine(_csvDir,   $"location_deals_{ts}.csv");
+            var pngPath  = Path.Combine(_chartDir, $"location_deals_{ts}.png");
+            await File.WriteAllTextAsync(csvPath,
+                "LocCod,ProductTypeName,TotalDeals\n" +
+                string.Join("\n", data.Select(d => $"{d.LocCod},{d.ProductTypeName},{d.TotalDeals}"))
+            );
+            var script = Path.Combine(_scriptDir, "generate_location_deals_product_chart.py");
+            var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+            {
+                RedirectStandardError = true,
+                UseShellExecute       = false
+            };
+            using var proc = Process.Start(psi)
+                          ?? throw new InvalidOperationException("Cannot start Python");
+            var err = await proc.StandardError.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+            if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+            return $"/charts/{Path.GetFileName(pngPath)}";
         }
     }
 }
 
-// File: Program.cs (additions)
-using StarTrends.Services;
+// File: PythonScripts/generate_location_deals_product_chart.py
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
 
-var builder = WebApplication.CreateBuilder(args);
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    pivot = df.pivot(index='LocCod', columns='ProductTypeName', values='TotalDeals').fillna(0)
+    pivot.plot(kind='bar', figsize=(10,6))
+    plt.xticks(rotation=0)
+    plt.tight_layout()
+    plt.savefig(outp)
 
-// register refreshers
-builder.Services.AddTransient<IChartRefresher, ProductTradesChartRefresher>();
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("Usage: python generate_location_deals_product_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2]);
 
-builder.Services.AddControllers();
+// Modify ChartUpdaterWorker.cs (inside ExecuteAsync):
+var locData = await oracle.GetLocationDealProductCountsAsync(DateTime.Now.AddDays(-7));
+var locUrl  = await chartGen.GenerateLocationDealProductChartAsync(locData);
+metadata["location_deals"] = new { ImageUrl = locUrl, LastUpdated = DateTime.UtcNow };
 
-// ... other registrations (RazorPages, Blazor, HttpClient, services, hosted worker) ...
-
-var app = builder.Build();
-
-app.UseRouting();
-app.UseEndpoints(endpoints =>
-{
-    endpoints.MapControllers();
-    endpoints.MapRazorPages();
-    endpoints.MapBlazorHub();
-    endpoints.MapFallbackToPage("/_Host");
-});
-
-app.Run();
+// Usage in UI (e.g. Pages/Index.razor):
+<GraphViewer GraphId="location_deals" Title="Deals by Location & Product (Last 7 Days)" />
