@@ -1,165 +1,101 @@
-// File: Services/ChartGeneratorService.cs
-using System;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using StarTrends.Models;
+// File: Shared/GraphViewer.razor
+@using System.Net.Http.Json
+@inject HttpClient Http
+@namespace StarTrends.Shared
 
-namespace StarTrends.Services
-{
-    public class ChartGeneratorService : IChartGeneratorService
+<div class="card mb-4 shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h5 class="mb-0">@Title</h5>
+    <div class="d-flex align-items-center">
+      @if (meta != null)
+      {
+        <span class="text-muted small mr-2">
+          @meta.LastUpdated.ToLocalTime().ToString("g")
+        </span>
+      }
+      <button class="btn btn-sm btn-outline-secondary" @onclick="Refresh" disabled="isLoading">
+        @(isLoading ? "Refreshing…" : "Refresh")
+      </button>
+    </div>
+  </div>
+  <div class="card-body text-center">
+    @if (isLoading)
     {
-        private readonly ILogger<ChartGeneratorService> _log;
-        private readonly string _scriptDir;
-        private readonly string _csvDir;
-        private readonly string _chartDir;
-
-        public ChartGeneratorService(
-            ILogger<ChartGeneratorService> log,
-            IConfiguration config,
-            IHostEnvironment env)
-        {
-            _log       = log;
-            _scriptDir = Path.Combine(env.ContentRootPath, config["ChartScriptsPath"]);
-            _csvDir    = Path.Combine(env.ContentRootPath, config["CsvOutputPath"]);
-            _chartDir  = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"]);
-
-            Directory.CreateDirectory(_scriptDir);
-            Directory.CreateDirectory(_csvDir);
-            Directory.CreateDirectory(_chartDir);
-        }
-
-        public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
-        {
-            var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-            var csvPath   = Path.Combine(_csvDir,   $"product_trades_{timestamp}.csv");
-            var pngPath   = Path.Combine(_chartDir, $"product_trades_{timestamp}.png");
-
-            await File.WriteAllTextAsync(csvPath,
-                "ProductTypeName,TotalTrades\n" +
-                string.Join("\n", data.Select(d => $"{d.ProductTypeName},{d.TotalTrades}"))
-            );
-
-            var script = Path.Combine(_scriptDir, "generate_product_trade_chart.py");
-            var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-            {
-                RedirectStandardError = true,
-                UseShellExecute       = false
-            };
-
-            using var proc = Process.Start(psi)
-                ?? throw new InvalidOperationException("Could not start Python process");
-
-            var error = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-            if (!string.IsNullOrWhiteSpace(error))
-                _log.LogError(error);
-
-            return $"/charts/{Path.GetFileName(pngPath)}";
-        }
+      <p class="text-muted">Loading chart…</p>
     }
-}
-
-// File: Workers/ChartUpdaterWorker.cs
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using StarTrends.Services;
-
-namespace StarTrends.Workers
-{
-    public class ChartUpdaterWorker : BackgroundService
+    else if (!string.IsNullOrEmpty(error))
     {
-        private readonly IServiceScopeFactory _scopeFactory;
-        private readonly ILogger<ChartUpdaterWorker> _log;
-        private readonly string _chartDir;
-        private readonly string _csvDir;
-        private readonly string _metaPath;
-        private readonly TimeSpan _interval;
-        private const int MaxKeep = 3;
-
-        public ChartUpdaterWorker(
-            IServiceScopeFactory scopeFactory,
-            IConfiguration config,
-            IHostEnvironment env,
-            ILogger<ChartUpdaterWorker> log)
-        {
-            _scopeFactory = scopeFactory;
-            _log          = log;
-            _interval     = TimeSpan.FromMinutes(config.GetValue<int>("ChartUpdateIntervalMinutes", 5));
-
-            _chartDir = Path.Combine(env.ContentRootPath, "wwwroot", config["ChartsOutputPath"]);
-            _csvDir   = Path.Combine(env.ContentRootPath,            config["CsvOutputPath"]);
-            Directory.CreateDirectory(_chartDir);
-            Directory.CreateDirectory(_csvDir);
-
-            _metaPath = Path.Combine(_chartDir, "metadata.json");
-        }
-
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
-                {
-                    using var scope = _scopeFactory.CreateScope();
-                    var oracle = scope.ServiceProvider.GetRequiredService<IOracleDataService>();
-                    var generator = scope.ServiceProvider.GetRequiredService<IChartGeneratorService>();
-
-                    var data = await oracle.GetProductTradeCountsAsync(DateTime.UtcNow.AddDays(-7));
-                    var url  = await generator.GenerateProductTradeChartAsync(data);
-
-                    var metadata = new Dictionary<string, object>
-                    {
-                        ["product_trades"] = new { ImageUrl = url, LastUpdated = DateTime.UtcNow }
-                    };
-
-                    await File.WriteAllTextAsync(
-                        _metaPath,
-                        JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true }),
-                        stoppingToken
-                    );
-
-                    CleanupOldFiles(_chartDir, "product_trades_*.png");
-                    CleanupOldFiles(_csvDir,   "product_trades_*.csv");
-
-                    _log.LogInformation("Chart and metadata updated: {Url}", url);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogError(ex, "Error in chart update");
-                }
-
-                await Task.Delay(_interval, stoppingToken);
-            }
-        }
-
-        private void CleanupOldFiles(string directory, string pattern)
-        {
-            var files = new DirectoryInfo(directory)
-                .GetFiles(pattern)
-                .OrderByDescending(f => f.CreationTimeUtc)
-                .Skip(MaxKeep);
-
-            foreach (var file in files)
-            {
-                try { file.Delete(); }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Failed to delete {File}", file.Name);
-                }
-            }
-        }
+      <div class="alert alert-danger mb-0">@error</div>
     }
+    else
+    {
+      <img src="@($"{meta.ImageUrl}?t={meta.LastUpdated.Ticks}")" class="img-fluid" alt="@Title" />
+    }
+  </div>
+</div>
+
+@code {
+  [Parameter] public string GraphId { get; set; }
+  [Parameter] public string Title { get; set; }
+
+  private bool isLoading;
+  private string error;
+  private ChartMeta meta;
+
+  protected override async Task OnInitializedAsync()
+  {
+    await LoadMetadata();
+  }
+
+  private async Task LoadMetadata()
+  {
+    isLoading = true;
+    error = null;
+    try
+    {
+      var dict = await Http.GetFromJsonAsync<Dictionary<string, ChartMeta>>("charts/metadata.json");
+      if (dict != null && dict.TryGetValue(GraphId, out meta))
+      {
+        // metadata loaded
+      }
+      else
+      {
+        error = $"No metadata found for '{GraphId}'";
+      }
+    }
+    catch (Exception ex)
+    {
+      error = ex.Message;
+    }
+    finally
+    {
+      isLoading = false;
+    }
+  }
+
+  private async Task Refresh()
+  {
+    isLoading = true;
+    error = null;
+    try
+    {
+      var resp = await Http.PostAsync($"/api/charts/{GraphId}/refresh", null);
+      resp.EnsureSuccessStatusCode();
+      meta = await resp.Content.ReadFromJsonAsync<ChartMeta>();
+    }
+    catch (Exception ex)
+    {
+      error = ex.Message;
+    }
+    finally
+    {
+      isLoading = false;
+    }
+  }
+
+  public class ChartMeta
+  {
+    public string ImageUrl { get; set; }
+    public DateTime LastUpdated { get; set; }
+  }
 }
