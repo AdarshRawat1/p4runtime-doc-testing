@@ -1,125 +1,13 @@
-**Implementing CSV approach**
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using StarTrends.Services;
 
-The user is happy with the CSV solution, as it allows regular updates via a script. I should now update the service code to reflect this preference, ensuring the auto folder creation and directory paths are properly set. In the chart generator service, I’ll generate the CSV, then trigger the Python script to produce the chart. I'll also need to update the ChartGeneratorService to handle directory setup and absolute paths based on this approach. Time to adjust the code!
-
-
-Thought for 7 seconds
-
-
-Perfect—let’s keep the CSV-based pipeline so you can reuse or refresh the CSV as needed. Below is the updated **ChartGeneratorService** that:
-
-1. Ensures the folders exist
-2. Writes a timestamped CSV of your `ProductTradeCount` data
-3. Calls the Python script to read that CSV and produce a PNG
-
-```csharp
-using System.Diagnostics;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Configuration;
-using Microsoft.AspNetCore.Hosting;
-using StarTrends.Models;
-
-namespace StarTrends.Services
-{
-    public class ChartGeneratorService : IChartGeneratorService
+Host.CreateDefaultBuilder(args)
+    .ConfigureServices((hostContext, services) =>
     {
-        private readonly ILogger<ChartGeneratorService> _logger;
-        private readonly string _scriptsFolder;
-        private readonly string _chartsFolder;
-
-        public ChartGeneratorService(
-            ILogger<ChartGeneratorService> logger,
-            IConfiguration config,
-            IWebHostEnvironment env)
-        {
-            _logger      = logger;
-
-            // Application root\PythonScripts
-            _scriptsFolder = Path.Combine(
-                env.ContentRootPath,
-                config["ChartScriptsPath"] ?? "PythonScripts");
-
-            // wwwroot\charts
-            _chartsFolder = Path.Combine(
-                env.WebRootPath,
-                config["ChartsOutputPath"] ?? "charts");
-
-            // Create directories if missing
-            Directory.CreateDirectory(_scriptsFolder);
-            Directory.CreateDirectory(_chartsFolder);
-        }
-
-        public async Task<string> GenerateProductTradeChartAsync(IEnumerable<ProductTradeCount> data)
-        {
-            // Prepare timestamped file names
-            var timestamp  = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-            var csvPath    = Path.Combine(_scriptsFolder, $"product_trades_{timestamp}.csv");
-            var pngPath    = Path.Combine(_chartsFolder, $"product_trades_{timestamp}.png");
-
-            // 1) Write CSV
-            await using (var writer = new StreamWriter(csvPath))
-            {
-                writer.WriteLine("ProductTypeName,TotalTrades");
-                foreach (var item in data)
-                    await writer.WriteLineAsync($"{item.ProductTypeName},{item.TotalTrades}");
-            }
-
-            // 2) Invoke Python script
-            var scriptFile = Path.Combine(_scriptsFolder, "generate_product_trade_chart.py");
-            var psi = new ProcessStartInfo
-            {
-                FileName            = "python",
-                Arguments           = $"\"{scriptFile}\" \"{csvPath}\" \"{pngPath}\"",
-                RedirectStandardError = true,
-                UseShellExecute     = false
-            };
-
-            using var proc = Process.Start(psi)
-                ?? throw new InvalidOperationException("Failed to launch Python process.");
-            var err = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-
-            if (!string.IsNullOrEmpty(err))
-                _logger.LogError("Python error: {Error}", err);
-
-            // Return a URL path that Blazor can render
-            return $"/charts/{Path.GetFileName(pngPath)}";
-        }
-    }
-}
-```
-
-And your **Python script** remains the same:
-
-```python
-# PythonScripts/generate_product_trade_chart.py
-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(input_csv, output_png):
-    df = pd.read_csv(input_csv)
-    plt.figure(figsize=(10, 6))
-    plt.bar(df['ProductTypeName'], df['TotalTrades'])
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(output_png)
-    plt.close()
-
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print("Usage: python generate_product_trade_chart.py <input_csv> <output_png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
----
-
-### Next Steps
-
-* **Populate** your `PythonScripts` folder with the above script and set it to copy to output.
-* **Create** a `charts` folder under **wwwroot** (or let the service auto-create it).
-* **Hit** your Blazor page’s “Refresh Chart” button to regenerate the CSV & PNG.
-
-Since the CSV lives on disk, you can also set up a cron job or Windows Task to repopulate it on a schedule if you ever need to pre-warm data outside of user requests. Let me know if you want a sample scheduler snippet!
+        services.AddScoped<IOracleDataService, OracleDataService>();
+        services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
+        services.AddHostedService<ChartUpdaterWorker>();
+    })
+    .Build()
+    .Run();
