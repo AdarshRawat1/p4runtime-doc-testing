@@ -1,12 +1,7 @@
 Thought for a couple of seconds
 
 
-When you moved to the “minimal API” style, you most likely removed the calls that wire up Razor Pages, so the router no longer knows about your `_Host.cshtml`. You need both:
-
-1. **AddRazorPages()** in the DI setup
-2. **MapRazorPages()** (or `MapFallbackToPage`) in the endpoint routing
-
-Here’s a drop-in **Program.cs** for your **StarTrends** (Blazor Server) app that will restore the fallback:
+Your Blazor Server app needs to restore the “host page” plumbing that was silently in place before. Here’s the *minimal* `Program.cs` that will get your UI loading again, alongside your chart‐API endpoints:
 
 ```csharp
 using Microsoft.AspNetCore.Builder;
@@ -16,33 +11,49 @@ using StarTrends.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1) Register Razor Pages & Blazor Server
+// 1) Register Razor Pages + Blazor Server
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 
-// 2) Register your data/chart services
+// 2) Your existing services
 builder.Services.AddScoped<IOracleDataService, OracleDataService>();
 builder.Services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
 
+// (If you have any HTTP-client–based calls in components)
+// builder.Services.AddHttpClient();
+
 var app = builder.Build();
 
-// 3) Standard middleware
-if (!app.Environment.IsDevelopment())
-{
-    app.UseExceptionHandler("/Error");
-}
+// 3) Static files + routing
 app.UseStaticFiles();
 app.UseRouting();
 
-// 4) Map endpoints
-app.MapRazorPages();            // <— this makes /Pages/*.cshtml discoverable
-app.MapBlazorHub();             // <— Blazor Server SignalR hub
-app.MapFallbackToPage("/_Host"); // <— any other URL falls back to Pages/_Host.cshtml
+// 4) Your chart “API” endpoints (optional—if you still need them)
+app.MapGet("/api/charts/metadata", (IHostEnvironment env) =>
+{
+    var meta = Path.Combine(env.ContentRootPath, "wwwroot", "charts", "metadata.json");
+    return Results.File(meta, "application/json");
+});
+app.MapPost("/api/charts/{chartId}/refresh",
+    async (string chartId,
+           IOracleDataService oracle,
+           IChartGeneratorService chartGen) =>
+    {
+        if (chartId != "productTrade") return Results.NotFound();
+        var data = await oracle.GetProductTradeCountsAsync(DateTime.Now.AddDays(-7));
+        var url  = await chartGen.GenerateProductTradeChartAsync(data);
+        return Results.Ok(new { ImageUrl = url, LastUpdated = DateTime.UtcNow });
+    });
+
+// 5) **Restore the Blazor Server endpoints**  
+app.MapRazorPages();             // ← makes Pages/*.cshtml discoverable  
+app.MapBlazorHub();              // ← SignalR hub for Blazor Server  
+app.MapFallbackToPage("/_Host"); // ← the catch-all fallback into _Host.cshtml  
 
 app.Run();
 ```
 
-**Check your `_Host.cshtml`** lives under **Pages/** and begins with `@page "/"`, for example:
+And make sure you have **Pages/\_Host.cshtml** in your project root under **Pages/** (not `Components/Pages`). A barebones `_Host.cshtml` looks like:
 
 ```cshtml
 @page "/"
@@ -52,7 +63,6 @@ app.Run();
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8" />
   <base href="~/" />
   <title>StarTrends</title>
   <link href="css/site.css" rel="stylesheet" />
@@ -64,4 +74,20 @@ app.Run();
 </html>
 ```
 
-Once you restore `AddRazorPages()` and `MapRazorPages()` (plus the `MapFallbackToPage`), your root URL (`/`) and any other client‐side route will correctly render your Blazor app instead of throwing the fallback‐endpoint error.
+### What changed and why
+
+* **You removed** the calls that wire up Razor Pages and the Blazor Hub, so ASP NET Core no longer knew how to serve `_Host.cshtml` at `/`.
+* By re-adding:
+
+  ```csharp
+  builder.Services.AddRazorPages();
+  builder.Services.AddServerSideBlazor();
+  …
+  app.MapRazorPages();
+  app.MapBlazorHub();
+  app.MapFallbackToPage("/_Host");
+  ```
+
+  you restore the fallback endpoint that any route (like `/`) falls into, which then boots your Blazor Server app.
+
+With these pieces in place, your site will render immediately (using the pre-generated PNG) without throwing the “Cannot find the fallback endpoint” error.
