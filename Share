@@ -305,3 +305,67 @@ CleanupOldFiles(_csvDir,   "stp_workflow_*.csv", MaxKeep);
 // Usage in UI
 <GraphViewer GraphId="stp_workflow" Title="OTC STP Workflow Trades per Week (Last 4y)" />
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+using Oracle.ManagedDataAccess.Client;
+using StarTrends.Models;
+
+public async Task<IEnumerable<StpWorkflowCount>> GetStpWorkflowTradesByWeekAsync(DateTime fromDate, DateTime toDate)
+{
+    var list = new List<StpWorkflowCount>();
+    const string sql = @"
+WITH first_ops AS (
+  SELECT 
+    h.con_no,
+    MIN(h.lst_mod_dt) AS first_dt
+  FROM star_workflow_hist h
+  JOIN star_contract PARTITION(product_oth) c
+    ON h.con_no = c.con_no
+  WHERE h.ops_sts_cod <> 'NOT'
+    AND h.lst_mod_dt >= :fromDate
+    AND h.lst_mod_dt <  :toDate
+  GROUP BY h.con_no
+)
+SELECT
+  TRUNC(first_dt, 'IW') AS week,
+  COUNT(*)             AS stp_deals
+FROM first_ops
+GROUP BY TRUNC(first_dt, 'IW')
+ORDER BY week ASC";
+
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    await using var cmd = new OracleCommand(sql, conn)
+    {
+        BindByName = true
+    };
+    cmd.Parameters.Add(new OracleParameter("fromDate", OracleDbType.Date) { Value = fromDate });
+    cmd.Parameters.Add(new OracleParameter("toDate",   OracleDbType.Date) { Value = toDate   });
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        list.Add(new StpWorkflowCount
+        {
+            Week     = reader.GetDateTime(0),
+            StpDeals = reader.GetInt32(1)
+        });
+    }
+
+    return list;
+}
+
+
