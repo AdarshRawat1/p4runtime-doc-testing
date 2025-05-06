@@ -1,251 +1,41 @@
-Thought for a second
-
-
-Here’s the full set of scripts, each prefixed with the filename and the “Usage” comment at the top:
-
----
-
-**File: `generate_location_deals_product_chart.py`**
-
-```python
-#!/usr/bin/env python3
-# Usage: python generate_location_deals_product_chart.py <in.csv> <out.png>
-# -*- coding: utf-8 -*-
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
 def main(inp, outp):
+    # read CSV
     df = pd.read_csv(inp)
+
+    # if no data, render “No data” image
     if df.empty:
         fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.text(0.5, 0.5, 'No data for this period',
+                ha='center', va='center', fontsize=14)
         ax.axis('off')
         plt.savefig(outp)
         return
-    pivot = df.pivot(index='LocCod', columns='ProductTypeName', values='TotalDeals').fillna(0)
-    ax = pivot.plot(kind='bar', figsize=(10,6))
-    for c in ax.containers:
-        ax.bar_label(c, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
-    plt.xticks(rotation=0)
-    plt.tight_layout()
-    plt.savefig(outp)
 
-if __name__ == '__main__':
-    if len(sys.argv)!=3: 
-        print("Usage: python generate_location_deals_product_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
+    # plot bar chart
+    ax = df.plot(
+        x='MarketEventName',
+        y='MEVS',
+        kind='bar',
+        figsize=(10,6)
+    )
 
----
+    # add value labels on each bar
+    for container in ax.containers:
+        ax.bar_label(container, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
 
-**File: `generate_error_correction_chart.py`**
-
-```python
-#!/usr/bin/env python3
-# Usage: python generate_error_correction_chart.py <in.csv> <out.png>
-# -*- coding: utf-8 -*-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-    df.sort_values('Week', inplace=True)
-    fig, ax = plt.subplots(figsize=(10,6))
-    ax.plot(df['Week'], df['Deals'], marker='o')
-    for x,y in zip(df['Week'], df['Deals']):
-        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
+    # formatting
     plt.xticks(rotation=45, ha='right')
+    plt.ylabel('Number of Events')
+    plt.xlabel('Market Event')
     plt.tight_layout()
     plt.savefig(outp)
 
 if __name__ == '__main__':
-    if len(sys.argv)!=3: 
-        print("Usage: python generate_error_correction_chart.py <in.csv> <out.png>", file=sys.stderr)
+    if len(sys.argv) != 3:
+        print("Usage: python generate_market_event_chart.py <in.csv> <out.png>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
-```
-
----
-
-**File: `generate_product_trade_chart.py`**
-
-```python
-#!/usr/bin/env python3
-# Usage: python generate_product_trade_chart.py <in.csv> <out.png>
-# -*- coding: utf-8 -*-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-    fig, ax = plt.subplots(figsize=(10,6))
-    ax.bar(df['ProductTypeName'], df['TotalTrades'])
-    for idx, val in enumerate(df['TotalTrades']):
-        ax.text(idx, val, f"{val}", va='bottom', ha='center', fontsize=9)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv)!=3: 
-        print("Usage: python generate_product_trade_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
----
-
-**File: `generate_rec_break_chart.py`**
-
-```python
-#!/usr/bin/env python3
-# Usage: python generate_rec_break_chart.py <in.csv> <out.png>
-# -*- coding: utf-8 -*-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-    pivot = df.pivot(index='BreakElement', columns='ProductTypeName', values='Total').fillna(0)
-    ax = pivot.plot(kind='bar', figsize=(10,6))
-    for c in ax.containers:
-        ax.bar_label(c, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv)!=3: 
-        print("Usage: python generate_rec_break_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
----
-
-**File: `generate_reg_report_chart.py`**
-
-```python
-#!/usr/bin/env python3
-# Usage: python generate_reg_report_chart.py <in.csv> <out.png>
-# -*- coding: utf-8 -*-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Hour'])
-    df['Count'] = pd.to_numeric(df['Count'], errors='coerce').fillna(0).astype(int)
-    pivot = df.pivot(index='Hour', columns='Location', values='Count').fillna(0)
-    if pivot.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data for the last period', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-    ax = pivot.plot(kind='bar', figsize=(10,6))
-    for c in ax.containers:
-        ax.bar_label(c, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv)!=3: 
-        print("Usage: python generate_reg_report_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
----
-
-**File: `generate_source_system_chart.py`**
-
-```python
-#!/usr/bin/env python3
-# Usage: python generate_source_system_chart.py <in.csv> <out.png>
-# -*- coding: utf-8 -*-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-    ax = df.plot(x='SourceSystem', y='DealsBooked', kind='bar', figsize=(8,5))
-    for c in ax.containers:
-        ax.bar_label(c, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv)!=3: 
-        print("Usage: python generate_source_system_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
----
-
-**File: `generate_stp_workflow_chart.py`**
-
-```python
-#!/usr/bin/env python3
-# Usage: python generate_stp_workflow_chart.py <in.csv> <out.png>
-# -*- coding: utf-8 -*-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-    df.sort_values('Week', inplace=True)
-    fig, ax = plt.subplots(figsize=(10,6))
-    ax.plot(df['Week'], df['StpDeals'], marker='o')
-    for x, y in zip(df['Week'], df['StpDeals']):
-        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv)!=3: 
-        print("Usage: python generate_stp_workflow_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
