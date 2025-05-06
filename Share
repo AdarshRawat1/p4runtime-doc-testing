@@ -1,4 +1,4 @@
-Thought for a second
+ji jiThought for a second
 
 
 Below is the full end-to-end integration for the **“Error Corrections Passed to Murex”** weekly line chart. Just drop each piece into your project:
@@ -187,3 +187,34 @@ Finally, wherever you list your graphs:
 ---
 
 **Rebuild** your worker and Blazor app, restart both, and you’ll see the new line chart appear—fully modular, following the same pattern as the others.
+
+
+
+
+
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import sys
+import pandas           as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    pivot = df.pivot(index="Hour", columns="Location", values="Count").fillna(0)
+
+    ax = pivot.plot(kind="bar", figsize=(10,6))
+    # this grabs all the BarContainer objects that `plot` created
+    for container in ax.containers:
+        ax.bar_label(container, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
+
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python generate_reg_report_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
