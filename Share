@@ -1,154 +1,74 @@
-ji jiThought for a second
+Thought for a second
 
 
-Below is the full end-to-end integration for the **“Error Corrections Passed to Murex”** weekly line chart. Just drop each piece into your project:
-
----
-
-### 1) Model
-
-```csharp
-// Models/ErrorCorrectionCount.cs
-namespace StarTrends.Models
-{
-    public class ErrorCorrectionCount
-    {
-        public DateTime Week { get; set; }
-        public int Deals { get; set; }
-    }
-}
-```
+Here’s the full set of scripts, each prefixed with the filename and the “Usage” comment at the top:
 
 ---
 
-### 2) Data Service
-
-```csharp
-// Services/IOracleDataService.cs (interface)
-using StarTrends.Models;
-
-public interface IOracleDataService
-{
-    // …other methods…
-    Task<IEnumerable<ErrorCorrectionCount>> GetErrorCorrectionCountsAsync(DateTime fromDate, DateTime toDate);
-}
-```
-
-```csharp
-// Services/OracleDataService.cs (implementation)
-using Oracle.ManagedDataAccess.Client;
-using StarTrends.Models;
-
-public async Task<IEnumerable<ErrorCorrectionCount>> GetErrorCorrectionCountsAsync(DateTime fromDate, DateTime toDate)
-{
-    var list = new List<ErrorCorrectionCount>();
-    const string sql = @"
-SELECT
-  TRUNC(wf.lst_mod_dt, 'IW') AS week,
-  COUNT(wf.con_no)         AS deals
-FROM star_workflow_hist wf
-WHERE wf.ext_sys_cod = 'MRX'
-  AND wf.mo_evt_flg   = 'ERR'
-  AND wf.mo_sts_cod   = 'DIP'
-  AND wf.ops_sts_cod  = 'REC'
-  AND wf.lst_mod_dt >= :fromDate
-  AND wf.lst_mod_dt <  :toDate
-  AND wf.con_no IN (SELECT con_no FROM star_contract PARTITION(product_oth))
-GROUP BY TRUNC(wf.lst_mod_dt, 'IW')
-ORDER BY week ASC";
-
-    await using var conn = new OracleConnection(_connectionString);
-    await conn.OpenAsync();
-
-    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-    cmd.Parameters.Add(new OracleParameter("fromDate", OracleDbType.Date) { Value = fromDate });
-    cmd.Parameters.Add(new OracleParameter("toDate",   OracleDbType.Date) { Value = toDate   });
-
-    await using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync())
-    {
-        list.Add(new ErrorCorrectionCount
-        {
-            Week  = reader.GetDateTime(0),
-            Deals = reader.GetInt32(1)
-        });
-    }
-
-    return list;
-}
-```
-
----
-
-### 3) Chart Generator
-
-```csharp
-// Services/IChartGeneratorService.cs (interface)
-using StarTrends.Models;
-
-public interface IChartGeneratorService
-{
-    // …other methods…
-    Task<string> GenerateErrorCorrectionChartAsync(IEnumerable<ErrorCorrectionCount> data);
-}
-```
-
-```csharp
-// Services/ChartGeneratorService.cs (implementation)
-using System.Diagnostics;
-using StarTrends.Models;
-
-public async Task<string> GenerateErrorCorrectionChartAsync(IEnumerable<ErrorCorrectionCount> data)
-{
-    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir,   $"error_corrections_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"error_corrections_{ts}.png");
-
-    await File.WriteAllTextAsync(csvPath,
-        "Week,Deals\n" +
-        string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.Deals}"))
-    );
-
-    var script = Path.Combine(_scriptDir, "generate_error_correction_chart.py");
-    var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-    {
-        RedirectStandardError = true,
-        UseShellExecute       = false
-    };
-    using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start Python");
-    var err = await proc.StandardError.ReadToEndAsync();
-    await proc.WaitForExitAsync();
-    if (!string.IsNullOrWhiteSpace(err))
-        _log.LogError(err);
-
-    return $"/charts/{Path.GetFileName(pngPath)}";
-}
-```
-
----
-
-### 4) Python Script
+**File: `generate_location_deals_product_chart.py`**
 
 ```python
-# PythonScripts/generate_error_correction_chart.py
+#!/usr/bin/env python3
+# Usage: python generate_location_deals_product_chart.py <in.csv> <out.png>
+# -*- coding: utf-8 -*-
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+    pivot = df.pivot(index='LocCod', columns='ProductTypeName', values='TotalDeals').fillna(0)
+    ax = pivot.plot(kind='bar', figsize=(10,6))
+    for c in ax.containers:
+        ax.bar_label(c, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
+    plt.xticks(rotation=0)
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == '__main__':
+    if len(sys.argv)!=3: 
+        print("Usage: python generate_location_deals_product_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+---
+
+**File: `generate_error_correction_chart.py`**
+
+```python
+#!/usr/bin/env python3
+# Usage: python generate_error_correction_chart.py <in.csv> <out.png>
+# -*- coding: utf-8 -*-
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
 def main(inp, outp):
     df = pd.read_csv(inp, parse_dates=['Week'])
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
     df.sort_values('Week', inplace=True)
-    plt.figure(figsize=(10,6))
-    plt.plot(df['Week'], df['Deals'], marker='o')
-    plt.xlabel('Week')
-    plt.ylabel('Deals')
-    plt.title('Error Corrections Passed to Murex per Week')
-    plt.xticks(rotation=45)
+    fig, ax = plt.subplots(figsize=(10,6))
+    ax.plot(df['Week'], df['Deals'], marker='o')
+    for x,y in zip(df['Week'], df['Deals']):
+        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(outp)
 
 if __name__ == '__main__':
-    if len(sys.argv) != 3:
+    if len(sys.argv)!=3: 
         print("Usage: python generate_error_correction_chart.py <in.csv> <out.png>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
@@ -156,65 +76,176 @@ if __name__ == '__main__':
 
 ---
 
-### 5) Worker Integration
+**File: `generate_product_trade_chart.py`**
 
-Inside your `ChartUpdaterWorker.ExecuteAsync(...)`, add:
-
-```csharp
-// Error corrections → Murex (last 7 days by week)
-var ecData = await oracle.GetErrorCorrectionCountsAsync(
-    DateTime.UtcNow.AddDays(-7 * 1), // 7 days back
-    DateTime.UtcNow
-);
-var ecUrl  = await chartGen.GenerateErrorCorrectionChartAsync(ecData);
-metadata["error_corrections"] = new { ImageUrl = ecUrl, LastUpdated = DateTime.UtcNow };
-
-CleanupOldFiles(_chartDir, "error_corrections_*.png", MaxKeep);
-CleanupOldFiles(_csvDir,   "error_corrections_*.csv", MaxKeep);
-```
-
----
-
-### 6) UI
-
-Finally, wherever you list your graphs:
-
-```razor
-<GraphViewer GraphId="error_corrections"
-             Title="Error Corrections Passed to Murex per Week (Last 7d)" />
-```
-
----
-
-**Rebuild** your worker and Blazor app, restart both, and you’ll see the new line chart appear—fully modular, following the same pattern as the others.
-
-
-
-
-
-
+```python
 #!/usr/bin/env python3
+# Usage: python generate_product_trade_chart.py <in.csv> <out.png>
 # -*- coding: utf-8 -*-
-
 import sys
-import pandas           as pd
+import pandas as pd
 import matplotlib.pyplot as plt
 
 def main(inp, outp):
     df = pd.read_csv(inp)
-    pivot = df.pivot(index="Hour", columns="Location", values="Count").fillna(0)
-
-    ax = pivot.plot(kind="bar", figsize=(10,6))
-    # this grabs all the BarContainer objects that `plot` created
-    for container in ax.containers:
-        ax.bar_label(container, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
-
-    plt.xticks(rotation=45, ha="right")
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+    fig, ax = plt.subplots(figsize=(10,6))
+    ax.bar(df['ProductTypeName'], df['TotalTrades'])
+    for idx, val in enumerate(df['TotalTrades']):
+        ax.text(idx, val, f"{val}", va='bottom', ha='center', fontsize=9)
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(outp)
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
+if __name__ == '__main__':
+    if len(sys.argv)!=3: 
+        print("Usage: python generate_product_trade_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+---
+
+**File: `generate_rec_break_chart.py`**
+
+```python
+#!/usr/bin/env python3
+# Usage: python generate_rec_break_chart.py <in.csv> <out.png>
+# -*- coding: utf-8 -*-
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+    pivot = df.pivot(index='BreakElement', columns='ProductTypeName', values='Total').fillna(0)
+    ax = pivot.plot(kind='bar', figsize=(10,6))
+    for c in ax.containers:
+        ax.bar_label(c, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == '__main__':
+    if len(sys.argv)!=3: 
+        print("Usage: python generate_rec_break_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+---
+
+**File: `generate_reg_report_chart.py`**
+
+```python
+#!/usr/bin/env python3
+# Usage: python generate_reg_report_chart.py <in.csv> <out.png>
+# -*- coding: utf-8 -*-
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp, parse_dates=['Hour'])
+    df['Count'] = pd.to_numeric(df['Count'], errors='coerce').fillna(0).astype(int)
+    pivot = df.pivot(index='Hour', columns='Location', values='Count').fillna(0)
+    if pivot.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5, 0.5, 'No data for the last period', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+    ax = pivot.plot(kind='bar', figsize=(10,6))
+    for c in ax.containers:
+        ax.bar_label(c, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == '__main__':
+    if len(sys.argv)!=3: 
         print("Usage: python generate_reg_report_chart.py <in.csv> <out.png>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
+```
+
+---
+
+**File: `generate_source_system_chart.py`**
+
+```python
+#!/usr/bin/env python3
+# Usage: python generate_source_system_chart.py <in.csv> <out.png>
+# -*- coding: utf-8 -*-
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+    ax = df.plot(x='SourceSystem', y='DealsBooked', kind='bar', figsize=(8,5))
+    for c in ax.containers:
+        ax.bar_label(c, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == '__main__':
+    if len(sys.argv)!=3: 
+        print("Usage: python generate_source_system_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+---
+
+**File: `generate_stp_workflow_chart.py`**
+
+```python
+#!/usr/bin/env python3
+# Usage: python generate_stp_workflow_chart.py <in.csv> <out.png>
+# -*- coding: utf-8 -*-
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp, parse_dates=['Week'])
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+    df.sort_values('Week', inplace=True)
+    fig, ax = plt.subplots(figsize=(10,6))
+    ax.plot(df['Week'], df['StpDeals'], marker='o')
+    for x, y in zip(df['Week'], df['StpDeals']):
+        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == '__main__':
+    if len(sys.argv)!=3: 
+        print("Usage: python generate_stp_workflow_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
