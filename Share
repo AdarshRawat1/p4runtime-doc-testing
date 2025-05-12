@@ -333,3 +333,73 @@ Your `GraphBox` will fetch `/charts/metadata.json`, pick out `contracts_backoffi
 ---
 
 Just copy these eight steps (models → UI) for *every* new chart, and you’ll have a fully modular Blazor + .NET 8 → Python → Oracle dashboard.
+
+
+
+
+
+
+public async Task<string> GenerateStpWorkflowChartAsync(IEnumerable<StpWorkflowCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var key     = "stp_workflow";
+    var pngFile = $"{key}_{ts}.png";
+    var pngPath = Path.Combine(_chartDir, pngFile);
+
+    var sb = new StringBuilder();
+    sb.AppendLine("Week,StpDeals");
+    foreach (var d in data)
+        sb.AppendLine($"{d.Week:yyyy-MM-dd},{d.StpDeals}");
+
+    var script = Path.Combine(_scriptDir, "generate_stp_workflow_chart.py");
+    var psi = new ProcessStartInfo("python", $"\"{script}\" - \"{pngPath}\"")
+    {
+        RedirectStandardInput  = true,
+        RedirectStandardError  = true,
+        UseShellExecute        = false,
+        CreateNoWindow         = true
+    };
+
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException();
+    await proc.StandardInput.WriteAsync(sb.ToString());
+    proc.StandardInput.Close();
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err))
+        _log.LogError(err);
+
+    return $"/charts/{pngFile}";
+}
+
+public async Task<string> GenerateErrorCorrectionChartAsync(IEnumerable<ErrorCorrectionCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var key     = "error_corrections";
+    var pngFile = $"{key}_{ts}.png";
+    var pngPath = Path.Combine(_chartDir, pngFile);
+
+    var sb = new StringBuilder();
+    sb.AppendLine("Week,Deals");
+    foreach (var d in data)
+        sb.AppendLine($"{d.Week:yyyy-MM-dd},{d.Deals}");
+
+    var script = Path.Combine(_scriptDir, "generate_error_correction_chart.py");
+    var psi = new ProcessStartInfo("python", $"\"{script}\" - \"{pngPath}\"")
+    {
+        RedirectStandardInput  = true,
+        RedirectStandardError  = true,
+        UseShellExecute        = false,
+        CreateNoWindow         = true
+    };
+
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException();
+    await proc.StandardInput.WriteAsync(sb.ToString());
+    proc.StandardInput.Close();
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err))
+        _log.LogError(err);
+
+    return $"/charts/{pngFile}";
+}
+
