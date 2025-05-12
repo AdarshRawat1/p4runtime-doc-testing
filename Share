@@ -1,11 +1,11 @@
 _log.LogInformation("Starting OTC Manual Workflow Trades per Week Chart update");
-    var otcData = await oracle.GetOtcManualWorkflowTradesPerWeekAsync(fromDate, toDate);
-    var otcUrl  = await chartGenerator.GenerateOtcManualWorkflowTradesPerWeekChartAsync(otcData);
+    var otcUrl = await chartGenerator.GenerateOtcManualWorkflowTradesPerWeekChartAsync(
+    await oracle.GetOtcManualWorkflowTradesPerWeekAsync(DateTime.UtcNow.AddYears(-4),DateTime.UtcNow.AddDays(-1)));
     metadata["otc_manual_workflow_trades_per_week"] = new { ImageUrl = otcUrl, LastUpdated = DateTime.UtcNow };
     _log.LogInformation("Updated OTC Manual Workflow Trades per Week Chart → {Url}", otcUrl);
 
     _log.LogInformation("Starting Contracts Sent to Back Office Chart update");
-    var cboData = await oracle.GetContractsSentToBackOfficeAsync(fromDate, toDate);
-    var cboUrl  = await chartGenerator.GenerateContractsSentToBackOfficeChartAsync(cboData);
+    var cboUrl = await chartGenerator.GenerateContractsSentToBackOfficeChartAsync(
+    await oracle.GetContractsSentToBackOfficeAsync(DateTime.UtcNow.AddYears(-4),DateTime.UtcNow.AddDays(-1)));
     metadata["contracts_backoffice"] = new { ImageUrl = cboUrl, LastUpdated = DateTime.UtcNow };
     _log.LogInformation("Updated Contracts Sent to Back Office Chart → {Url}", cboUrl);
