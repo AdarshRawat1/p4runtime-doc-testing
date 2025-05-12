@@ -1,58 +1,127 @@
- // ChartGeneratorService.cs
+The ORA-01652 is coming from Oracle running out of **TEMP** space when it tries to materialize all of those nested `IN (SELECT …)` subqueries. We can avoid that entirely by pushing your date filters inside the driving table, and replacing the “find the first `lst_mod_dt` per `con_no`” logic with a simple `ROW_NUMBER() OVER (PARTITION BY …)` instead of a big `IN (SELECT con_no, MIN(…) … GROUP BY)`.
 
-public async Task<string> GenerateOtcManualWorkflowTradesPerWeekChartAsync(IEnumerable<OtcManualWorkflowTradesPerWeekCount> data)
+Below are the **only two** methods you need to swap out in your `OracleDataService`. They both:
+
+1. Bind `:fromDate`/`:toDate` instead of doing `> SYSDATE-N` in SQL.
+2. Filter on `h.lst_mod_dt BETWEEN :fromDate AND :toDate` as early as possible.
+3. Use an analytic `ROW_NUMBER()` to get the “first manual workflow per contract” so you never build a huge temp set.
+
+---
+
+```csharp
+public async Task<IEnumerable<OtcManualWorkflowTradesPerWeekCount>>
+    GetOtcManualWorkflowTradesPerWeekAsync(DateTime fromDate, DateTime toDate)
 {
-    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir, $"otc_manual_workflow_trades_per_week_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"otc_manual_workflow_trades_per_week_{ts}.png");
+    const string sql = @"
+SELECT week_dt AS Week,
+       COUNT(*) AS ManuDeals
+  FROM (
+    SELECT h.con_no,
+           TRUNC(h.lst_mod_dt,'DAY') AS week_dt,
+           ROW_NUMBER() OVER (PARTITION BY h.con_no ORDER BY h.lst_mod_dt) AS rn
+      FROM star_workflow_hist h
+      JOIN star_contract PARTITION(product_oth) c
+        ON c.con_no = h.con_no
+     WHERE h.ops_sts_cod = 'NOT'
+       AND h.lst_mod_dt  BETWEEN :fromDate AND :toDate
+  )
+ WHERE rn = 1
+ GROUP BY week_dt
+ ORDER BY week_dt";
 
-    await File.WriteAllTextAsync(csvPath,
-        "Week,ManuDeals\n" +
-        string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.ManuDeals}"))
-    );
+    var list = new List<OtcManualWorkflowTradesPerWeekCount>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
 
-    var script = Path.Combine(_scriptDir, "generate_otc_manual_workflow_trades_per_week_chart.py");
-    var psi    = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
     {
-        RedirectStandardError = true,
-        UseShellExecute       = false
-    };
+        list.Add(new OtcManualWorkflowTradesPerWeekCount
+        {
+            Week      = rdr.GetDateTime(rdr.GetOrdinal("Week")),
+            ManuDeals = rdr.GetInt32   (rdr.GetOrdinal("ManuDeals"))
+        });
+    }
 
-    using var proc = Process.Start(psi) 
-                  ?? throw new InvalidOperationException("Cannot start Python");
-    var err = await proc.StandardError.ReadToEndAsync();
-    await proc.WaitForExitAsync();
-    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
-
-    return $"/charts/{Path.GetFileName(pngPath)}";
+    return list;
 }
+```
 
-public async Task<string> GenerateContractsSentToBackOfficeChartAsync(IEnumerable<ContractsSentToBackOfficeCount> data)
+```csharp
+public async Task<IEnumerable<ContractsSentToBackOfficeCount>>
+    GetContractsSentToBackOfficeAsync(DateTime fromDate, DateTime toDate)
 {
-    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir, $"contracts_backoffice_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"contracts_backoffice_{ts}.png");
+    const string sql = @"
+WITH all_deals AS (
+    SELECT DECODE(wf.ext_sys_cod,
+                  'BTR','BND2','BD2','BND2',
+                  'UBX','Ubix','UB2','Ubix',
+                  wf.ext_sys_cod)   AS BackOffice,
+           TRUNC(c.inp_dt,'MONTH')      AS Month
+      FROM star_workflow wf
+      JOIN star_contract c
+        ON c.con_no = wf.con_no
+     WHERE wf.ext_sys_cod IS NOT NULL
+       AND c.inp_dt       BETWEEN :fromDate AND :toDate
 
-    await File.WriteAllTextAsync(csvPath,
-        "BackOffice,Deals,Month\n" +
-        string.Join("\n", data.Select(d => $"{d.BackOffice},{d.Deals},{d.Month:yyyy-MM-dd}"))
-    );
+    UNION ALL
 
-    var script = Path.Combine(_scriptDir, "generate_contracts_sent_to_back_office_chart.py");
-    var psi    = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    SELECT 'OMR'                       AS BackOffice,
+           TRUNC(o.exp_dt,'MONTH')     AS Month
+      FROM star_omr_exp o
+     WHERE o.exp_dt       BETWEEN :fromDate AND :toDate
+)
+SELECT BackOffice,
+       COUNT(*)    AS Deals,
+       Month
+  FROM all_deals
+ GROUP BY BackOffice, Month
+ ORDER BY BackOffice, Month";
+
+    var list = new List<ContractsSentToBackOfficeCount>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
     {
-        RedirectStandardError = true,
-        UseShellExecute       = false
-    };
+        list.Add(new ContractsSentToBackOfficeCount
+        {
+            BackOffice = rdr.GetString   (rdr.GetOrdinal("BackOffice")),
+            Deals      = rdr.GetInt32    (rdr.GetOrdinal("Deals")),
+            Month      = rdr.GetDateTime(rdr.GetOrdinal("Month"))
+        });
+    }
 
-    using var proc = Process.Start(psi)
-                  ?? throw new InvalidOperationException("Cannot start Python");
-    var err = await proc.StandardError.ReadToEndAsync();
-    await proc.WaitForExitAsync();
-    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
-
-    return $"/charts/{Path.GetFileName(pngPath)}";
+    return list;
 }
+```
+
+**Why this fixes it**
+
+* **No big nested IN-subselects**: we never ask Oracle to build and sort two huge result sets then join them.
+* **Window function**: `ROW_NUMBER()` runs entirely in-line, doesn’t need a temp tablespace for your MIN/UNION logic.
+* **Early date filtering**: by moving `BETWEEN :fromDate AND :toDate` inside the inner query, you drastically reduce the number of rows Oracle has to scan and sort.
+
+Swap those two methods in your `OracleDataService`, redeploy, and your TEMP-tablespace errors should disappear—both for **OTC manual workflow per week** and **Contracts sent to back office per month**.
+
+
+
+
+
+
+
+
+
+
 
 public async Task<string> GenerateDeletionsOnMurexChartAsync(IEnumerable<DeletionsOnMurexCount> data)
 {
