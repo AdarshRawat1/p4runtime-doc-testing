@@ -339,67 +339,267 @@ Just copy these eight steps (models → UI) for *every* new chart, and you’ll 
 
 
 
-public async Task<string> GenerateStpWorkflowChartAsync(IEnumerable<StpWorkflowCount> data)
+
+
+
+
+
+Here’s the same 8-step pattern applied to your **OTC manual workflow trades per week** chart:
+
+---
+
+## 1. Model
+
+**File:** `Models/OtcManualWorkflowTradesPerWeekCount.cs`
+
+```csharp
+namespace StarTrends.Models
 {
-    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var key     = "stp_workflow";
-    var pngFile = $"{key}_{ts}.png";
-    var pngPath = Path.Combine(_chartDir, pngFile);
-
-    var sb = new StringBuilder();
-    sb.AppendLine("Week,StpDeals");
-    foreach (var d in data)
-        sb.AppendLine($"{d.Week:yyyy-MM-dd},{d.StpDeals}");
-
-    var script = Path.Combine(_scriptDir, "generate_stp_workflow_chart.py");
-    var psi = new ProcessStartInfo("python", $"\"{script}\" - \"{pngPath}\"")
+    public class OtcManualWorkflowTradesPerWeekCount
     {
-        RedirectStandardInput  = true,
-        RedirectStandardError  = true,
-        UseShellExecute        = false,
-        CreateNoWindow         = true
-    };
-
-    using var proc = Process.Start(psi) ?? throw new InvalidOperationException();
-    await proc.StandardInput.WriteAsync(sb.ToString());
-    proc.StandardInput.Close();
-    var err = await proc.StandardError.ReadToEndAsync();
-    await proc.WaitForExitAsync();
-    if (!string.IsNullOrWhiteSpace(err))
-        _log.LogError(err);
-
-    return $"/charts/{pngFile}";
+        public DateTime Week { get; set; }      // TRUNC(w.lst_mod_dt,'DAY')
+        public int ManuDeals { get; set; }      // COUNT(1)
+    }
 }
+```
 
-public async Task<string> GenerateErrorCorrectionChartAsync(IEnumerable<ErrorCorrectionCount> data)
+---
+
+## 2. Data service interface
+
+**File:** `Services/IOracleDataService.cs`
+
+```csharp
+using StarTrends.Models;
+
+public interface IOracleDataService
 {
-    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var key     = "error_corrections";
-    var pngFile = $"{key}_{ts}.png";
-    var pngPath = Path.Combine(_chartDir, pngFile);
+    // …existing methods…
 
-    var sb = new StringBuilder();
-    sb.AppendLine("Week,Deals");
-    foreach (var d in data)
-        sb.AppendLine($"{d.Week:yyyy-MM-dd},{d.Deals}");
-
-    var script = Path.Combine(_scriptDir, "generate_error_correction_chart.py");
-    var psi = new ProcessStartInfo("python", $"\"{script}\" - \"{pngPath}\"")
-    {
-        RedirectStandardInput  = true,
-        RedirectStandardError  = true,
-        UseShellExecute        = false,
-        CreateNoWindow         = true
-    };
-
-    using var proc = Process.Start(psi) ?? throw new InvalidOperationException();
-    await proc.StandardInput.WriteAsync(sb.ToString());
-    proc.StandardInput.Close();
-    var err = await proc.StandardError.ReadToEndAsync();
-    await proc.WaitForExitAsync();
-    if (!string.IsNullOrWhiteSpace(err))
-        _log.LogError(err);
-
-    return $"/charts/{pngFile}";
+    Task<IEnumerable<OtcManualWorkflowTradesPerWeekCount>>
+        GetOtcManualWorkflowTradesPerWeekAsync(DateTime fromDate, DateTime toDate);
 }
+```
 
+---
+
+## 3. Data service implementation
+
+**File:** `Services/OracleDataService.cs`
+
+```csharp
+using Oracle.ManagedDataAccess.Client;
+using StarTrends.Models;
+
+public class OracleDataService : IOracleDataService
+{
+    // …ctor…
+
+    public async Task<IEnumerable<OtcManualWorkflowTradesPerWeekCount>>
+        GetOtcManualWorkflowTradesPerWeekAsync(DateTime fromDate, DateTime toDate)
+    {
+        var list = new List<OtcManualWorkflowTradesPerWeekCount>();
+        await using var conn = new OracleConnection(_connectionString);
+        await conn.OpenAsync();
+
+        const string sql = @"
+WITH otc_workflow_hist AS (
+    SELECT *
+      FROM star_workflow_hist
+     WHERE con_no IN (SELECT con_no FROM star_contract PARTITION(product_oth))
+),
+manu AS (
+    SELECT DISTINCT con_no
+      FROM otc_workflow_hist
+     WHERE ops_sts_cod = 'NOT'
+)
+SELECT TRUNC(w.lst_mod_dt,'DAY') AS Week,
+       COUNT(1)                  AS ManuDeals
+  FROM (
+    SELECT h.con_no, h.lst_mod_dt
+      FROM otc_workflow_hist h
+     WHERE (h.con_no, h.lst_mod_dt) IN (
+         SELECT con_no, MIN(lst_mod_dt)
+           FROM otc_workflow_hist
+          WHERE con_no IN (SELECT con_no FROM manu)
+          GROUP BY con_no
+     )
+  ) w
+ WHERE w.lst_mod_dt BETWEEN :fromDate AND :toDate
+ GROUP BY TRUNC(w.lst_mod_dt,'DAY')
+ ORDER BY Week ASC";
+
+        await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+        cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+        cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+
+        await using var rdr = await cmd.ExecuteReaderAsync();
+        while (await rdr.ReadAsync())
+        {
+            list.Add(new OtcManualWorkflowTradesPerWeekCount
+            {
+                Week      = rdr.GetDateTime(rdr.GetOrdinal("Week")),
+                ManuDeals = rdr.GetInt32 (rdr.GetOrdinal("ManuDeals"))
+            });
+        }
+
+        return list;
+    }
+}
+```
+
+---
+
+## 4. Chart generator interface
+
+**File:** `Services/IChartGeneratorService.cs`
+
+```csharp
+using StarTrends.Models;
+
+public interface IChartGeneratorService
+{
+    // …existing methods…
+
+    /// <summary>
+    /// Builds a bar chart of manual OTC trades per week.
+    /// </summary>
+    Task<string> GenerateOtcManualWorkflowTradesPerWeekChartAsync(
+        IEnumerable<OtcManualWorkflowTradesPerWeekCount> data);
+}
+```
+
+---
+
+## 5. Chart generator implementation
+
+**File:** `Services/ChartGeneratorService.cs`
+
+```csharp
+public class ChartGeneratorService : IChartGeneratorService
+{
+    // …ctor…
+
+    public async Task<string> GenerateOtcManualWorkflowTradesPerWeekChartAsync(
+        IEnumerable<OtcManualWorkflowTradesPerWeekCount> data)
+    {
+        var timestamp = DateTime.UtcNow:ToString("yyyyMMddHHmmss");
+        var key       = "otc_manual_workflow_trades_per_week";
+        var csvFile   = Path.Combine(_csvDir, $"{key}_{timestamp}.csv");
+        var pngFile   = $"{key}_{timestamp}.png";
+        var pngPath   = Path.Combine(_chartsDir, pngFile);
+
+        // dump CSV
+        await using (var w = new StreamWriter(csvFile))
+        {
+            w.WriteLine("Week,ManuDeals");
+            foreach (var r in data)
+                w.WriteLine($"{r.Week:yyyy-MM-dd},{r.ManuDeals}");
+        }
+
+        // call Python
+        var psi = new ProcessStartInfo
+        {
+            FileName              = "python",
+            Arguments             = $"generate_otc_manual_workflow_trades_per_week_chart.py \"{csvFile}\" \"{pngPath}\"",
+            RedirectStandardError = true,
+            UseShellExecute       = false,
+            CreateNoWindow        = true
+        };
+
+        using var proc = Process.Start(psi);
+        var err = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+
+        if (proc.ExitCode != 0)
+            _logger.LogError("Chart script error: {Err}", err);
+
+        return $"/charts/{pngFile}";
+    }
+}
+```
+
+---
+
+## 6. Python script
+
+**File:** `PythonScripts/generate_otc_manual_workflow_trades_per_week_chart.py`
+
+```python
+#!/usr/bin/env python3
+# Usage: python generate_otc_manual_workflow_trades_per_week_chart.py <in.csv> <out.png>
+# -*- coding: utf-8 -*-
+
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp, parse_dates=['Week'])
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+
+    ax = df.plot(x='Week', y='ManuDeals', kind='bar', figsize=(10,6))
+    for container in ax.containers:
+        ax.bar_label(container, fmt='%.0f', label_type='edge', padding=2, fontsize=9)
+
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("Usage: python … <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+---
+
+## 7. Worker integration
+
+**File:** `Workers/ChartUpdaterWorker.cs` (inside your existing `ExecuteAsync`)
+
+```csharp
+// …after other charts…
+var fromDate = DateTime.UtcNow.AddYears(-4);
+var toDate   = DateTime.UtcNow.AddDays(-1);  // up to yesterday
+
+var weekData = await _oracle.GetOtcManualWorkflowTradesPerWeekAsync(fromDate, toDate);
+var weekUrl  = await _chartGen.GenerateOtcManualWorkflowTradesPerWeekChartAsync(weekData);
+
+meta["otc_manual_workflow_trades_per_week"] = new {
+    ImageUrl   = weekUrl,
+    LastUpdated = DateTime.UtcNow
+};
+```
+
+(The cleanup logic you already have will remove old CSVs/PNGs.)
+
+---
+
+## 8. UI component
+
+Anywhere you want this chart—e.g. in `Pages/Usage.razor`:
+
+```razor
+<GraphBox GraphId="otc_manual_workflow_trades_per_week"
+          Title="OTC manual workflow trades per week" />
+```
+
+Your existing `GraphBox` will fetch `metadata.json`, grab the `"otc_manual_workflow_trades_per_week"` entry, and render the PNG (with a `?t=` cache-buster), including loading and error states.
+
+---
+
+### Backlog reminders
+
+* Per-chart refresh intervals via `appsettings.json`
+* “Refresh All” control
+* Stream CSV to Python via stdin
+* Long-lived Python subprocess pool
+
+With this, you can now add **OTC manual workflow trades per week** exactly as you did your first chart—just copy steps 1–8 and swap in your SQL, names, and script.
