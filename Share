@@ -188,3 +188,600 @@ public async Task<string> GenerateMwRecBreaksPerThousandChartAsync(IEnumerable<M
 
     return $"/charts/{Path.GetFileName(pngPath)}";
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Below is the **complete implementation** for all five new charts, following our in-memory CSV→stdin pattern and your two-liner worker style. Drop each snippet into the files indicated.
+
+---
+
+## 1. Models
+
+**Models/DeletionsOnMurexCount.cs**
+
+```csharp
+namespace StarTrends.Models
+{
+    public class DeletionsOnMurexCount
+    {
+        public DateTime Week { get; set; }
+        public int Deals       { get; set; }
+    }
+}
+```
+
+**Models/OtcIntradayRecBreaksPerWeekCount.cs**
+
+```csharp
+namespace StarTrends.Models
+{
+    public class OtcIntradayRecBreaksPerWeekCount
+    {
+        public DateTime Week     { get; set; }
+        public int RecBreaks     { get; set; }
+    }
+}
+```
+
+**Models/OtcTradesSavedPerMinuteCount.cs**
+
+```csharp
+namespace StarTrends.Models
+{
+    public class OtcTradesSavedPerMinuteCount
+    {
+        public string Minute     { get; set; }
+        public int TradesSaved   { get; set; }
+    }
+}
+```
+
+**Models/OtcRecBreaksByReasonCount.cs**
+
+```csharp
+namespace StarTrends.Models
+{
+    public class OtcRecBreaksByReasonCount
+    {
+        public string BreakReason { get; set; }
+        public int Breaks         { get; set; }
+        public DateTime Month     { get; set; }
+    }
+}
+```
+
+**Models/MwRecBreaksPerThousandCount.cs**
+
+```csharp
+namespace StarTrends.Models
+{
+    public class MwRecBreaksPerThousandCount
+    {
+        public DateTime Week                      { get; set; }
+        public double RecBreaksPerThousandDeals   { get; set; }
+    }
+}
+```
+
+---
+
+## 2. IOracleDataService
+
+**Services/IOracleDataService.cs**
+
+```csharp
+Task<IEnumerable<DeletionsOnMurexCount>> GetDeletionsOnMurexAsync(DateTime fromDate, DateTime toDate);
+Task<IEnumerable<OtcIntradayRecBreaksPerWeekCount>> GetOtcIntradayRecBreaksPerWeekAsync(DateTime fromDate, DateTime toDate);
+Task<IEnumerable<OtcTradesSavedPerMinuteCount>> GetOtcTradesSavedPerMinuteAsync(DateTime fromDate, DateTime toDate);
+Task<IEnumerable<OtcRecBreaksByReasonCount>> GetOtcRecBreaksByReasonAsync(DateTime fromDate, DateTime toDate);
+Task<IEnumerable<MwRecBreaksPerThousandCount>> GetMwRecBreaksPerThousandAsync(DateTime fromDate, DateTime toDate);
+```
+
+---
+
+## 3. OracleDataService
+
+**Services/OracleDataService.cs** (add to class)
+
+```csharp
+public async Task<IEnumerable<DeletionsOnMurexCount>> GetDeletionsOnMurexAsync(DateTime fromDate, DateTime toDate)
+{
+    var list = new List<DeletionsOnMurexCount>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    const string sql = @"
+SELECT TRUNC(wf.lst_mod_dt,'DAY') AS Week,
+       COUNT(con_no)             AS Deals
+  FROM star_workflow_hist wf
+ WHERE wf.ext_sys_cod = 'MRX'
+   AND wf.mo_evt_flg IN ('DEL','HDE')
+   AND wf.mo_sts_cod = 'DIP'
+   AND wf.ops_sts_cod = 'REC'
+   AND wf.lst_mod_dt BETWEEN :fromDate AND :toDate
+   AND wf.con_no IN (SELECT con_no FROM star_contract PARTITION(product_oth))
+ GROUP BY TRUNC(wf.lst_mod_dt,'DAY')
+ ORDER BY Week";
+
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+        list.Add(new DeletionsOnMurexCount
+        {
+            Week  = rdr.GetDateTime(rdr.GetOrdinal("Week")),
+            Deals = rdr.GetInt32  (rdr.GetOrdinal("Deals"))
+        });
+    return list;
+}
+
+public async Task<IEnumerable<OtcIntradayRecBreaksPerWeekCount>> GetOtcIntradayRecBreaksPerWeekAsync(DateTime fromDate, DateTime toDate)
+{
+    var list = new List<OtcIntradayRecBreaksPerWeekCount>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    const string sql = @"
+WITH distinct_recbreaks AS (
+  SELECT con_no, MAX(rec_ver_no) AS REC_VER_NO
+    FROM star_rec_hist
+   WHERE lst_mod_dt > TRUNC(SYSDATE)-1460
+     AND TRUNC(lst_mod_dt,'DAY') < TRUNC(SYSDATE,'DAY')
+     AND rec_src='INT' AND rec_sts='DIF'
+   GROUP BY con_no
+), distinct_recbreaks_with_date AS (
+  SELECT d.con_no, d.lst_mod_dt
+    FROM star_rec_hist d
+    JOIN distinct_recbreaks r
+      ON r.con_no=d.con_no AND r.rec_ver_no=d.rec_ver_no
+)
+SELECT TRUNC(r.lst_mod_dt,'DAY') AS Week,
+       COUNT(1)               AS RecBreaks
+  FROM distinct_recbreaks_with_date r
+  JOIN star_contract PARTITION(product_oth) c ON c.con_no=r.con_no
+ WHERE c.mrr_typ_cod IN (0,1,6)
+   AND c.inp_dt > TRUNC(SYSDATE)-1460
+ GROUP BY TRUNC(r.lst_mod_dt,'DAY')
+ ORDER BY Week";
+
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+        list.Add(new OtcIntradayRecBreaksPerWeekCount
+        {
+            Week      = rdr.GetDateTime(rdr.GetOrdinal("Week")),
+            RecBreaks = rdr.GetInt32   (rdr.GetOrdinal("RecBreaks"))
+        });
+    return list;
+}
+
+public async Task<IEnumerable<OtcTradesSavedPerMinuteCount>> GetOtcTradesSavedPerMinuteAsync(DateTime fromDate, DateTime toDate)
+{
+    var list = new List<OtcTradesSavedPerMinuteCount>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    const string sql = @"
+SELECT TO_CHAR(l.upd_timestamp,'dd-Mon-yyyy HH24:MI') AS Minute,
+       COUNT(1)                               AS TradesSaved
+  FROM star_link_timestamp l
+  JOIN star_contract PARTITION(product_oth) c
+    ON l.chd_no=c.con_no
+ WHERE l.upd_timestamp BETWEEN :fromDate AND :toDate
+ GROUP BY TO_CHAR(l.upd_timestamp,'dd-Mon-yyyy HH24:MI')
+ ORDER BY Minute";
+
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+        list.Add(new OtcTradesSavedPerMinuteCount
+        {
+            Minute     = rdr.GetString(rdr.GetOrdinal("Minute")),
+            TradesSaved= rdr.GetInt32 (rdr.GetOrdinal("TradesSaved"))
+        });
+    return list;
+}
+
+public async Task<IEnumerable<OtcRecBreaksByReasonCount>> GetOtcRecBreaksByReasonAsync(DateTime fromDate, DateTime toDate)
+{
+    var list = new List<OtcRecBreaksByReasonCount>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    const string sql = @"
+WITH distinct_recbreaks AS (
+  SELECT con_no, MAX(rec_ver_no) AS REC_VER_NO
+    FROM star_rec_hist
+   WHERE lst_mod_dt > TRUNC(SYSDATE)-(365+1)
+     AND TRUNC(lst_mod_dt,'DAY') < TRUNC(SYSDATE,'DAY')
+     AND rec_src='INT' AND rec_sts='DIF'
+   GROUP BY con_no
+), distinct_recbreaks_with_date AS (
+  SELECT d.con_no, d.rec_brk_reason, d.lst_mod_dt
+    FROM star_rec_hist d
+    JOIN distinct_recbreaks r
+      ON r.con_no=d.con_no AND r.rec_ver_no=d.rec_ver_no
+)
+SELECT t.description            AS BreakReason,
+       COUNT(1)                 AS Breaks,
+       TRUNC(r.lst_mod_dt,'DAY')AS Month
+  FROM distinct_recbreaks_with_date r
+  JOIN star_contract PARTITION(product_oth) c
+    ON c.con_no=r.con_no AND c.mrr_typ_cod IN (0,1,6)
+  LEFT JOIN star_typ_cod t
+    ON t.grp_id=9 AND t.typ_cod=r.rec_brk_reason
+ WHERE r.lst_mod_dt BETWEEN :fromDate AND :toDate
+ GROUP BY TRUNC(r.lst_mod_dt,'DAY'), t.description
+ ORDER BY BreakReason";
+
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+        list.Add(new OtcRecBreaksByReasonCount
+        {
+            BreakReason = rdr.GetString   (rdr.GetOrdinal("BreakReason")),
+            Breaks      = rdr.GetInt32    (rdr.GetOrdinal("Breaks")),
+            Month       = rdr.GetDateTime (rdr.GetOrdinal("Month"))
+        });
+    return list;
+}
+
+public async Task<IEnumerable<MwRecBreaksPerThousandCount>> GetMwRecBreaksPerThousandAsync(DateTime fromDate, DateTime toDate)
+{
+    var list = new List<MwRecBreaksPerThousandCount>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    const string sql = @"
+WITH t1 AS (
+  SELECT TRUNC(i.lst_mod_dt,'DAY') AS Week,
+         COUNT(1)               AS NumBreaks
+    FROM star_import_rec_hist i
+    JOIN star_contract PARTITION(product_oth) c ON i.con_no=c.con_no
+   WHERE i.rec_src='SWI'
+     AND i.rec_sts='DIF'
+     AND i.lst_mod_dt BETWEEN :fromDate AND :toDate
+   GROUP BY TRUNC(i.lst_mod_dt,'DAY')
+),
+t2 AS (
+  SELECT TRUNC(c.inp_dt,'DAY')    AS Week,
+         COUNT(1)                 AS TotalDeals
+    FROM star_contract PARTITION(product_oth) c
+   WHERE c.src_sys_cod='SWI'
+     AND c.inp_dt BETWEEN :fromDate AND :toDate
+   GROUP BY TRUNC(c.inp_dt,'DAY')
+)
+SELECT t1.Week,
+       t1.NumBreaks*1000.0/t2.TotalDeals AS RecBreaksPerThousandDeals
+  FROM t1 JOIN t2 ON t1.Week=t2.Week
+ ORDER BY t1.Week";
+
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+        list.Add(new MwRecBreaksPerThousandCount
+        {
+            Week                    = rdr.GetDateTime(rdr.GetOrdinal("Week")),
+            RecBreaksPerThousandDeals = rdr.GetDouble(rdr.GetOrdinal("RecBreaksPerThousandDeals"))
+        });
+    return list;
+}
+```
+
+---
+
+## 4. IChartGeneratorService
+
+**Services/IChartGeneratorService.cs**
+
+```csharp
+Task<string> GenerateDeletionsOnMurexChartAsync(IEnumerable<DeletionsOnMurexCount> data);
+Task<string> GenerateOtcIntradayRecBreaksPerWeekChartAsync(IEnumerable<OtcIntradayRecBreaksPerWeekCount> data);
+Task<string> GenerateOtcTradesSavedPerMinuteChartAsync(IEnumerable<OtcTradesSavedPerMinuteCount> data);
+Task<string> GenerateOtcRecBreaksByReasonChartAsync(IEnumerable<OtcRecBreaksByReasonCount> data);
+Task<string> GenerateMwRecBreaksPerThousandChartAsync(IEnumerable<MwRecBreaksPerThousandCount> data);
+```
+
+---
+
+## 5. ChartGeneratorService
+
+**Services/ChartGeneratorService.cs** (add methods)
+
+```csharp
+public async Task<string> GenerateDeletionsOnMurexChartAsync(IEnumerable<DeletionsOnMurexCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var key     = "deletions_murex";
+    var pngFile = $"{key}_{ts}.png";
+    var pngPath = Path.Combine(_chartDir, pngFile);
+    var sb      = new StringBuilder()
+        .AppendLine("Week,Deals");
+    foreach (var d in data)
+        sb.AppendLine($"{d.Week:yyyy-MM-dd},{d.Deals}");
+
+    var psi = new ProcessStartInfo("python", $"\"{Path.Combine(_scriptDir,"generate_deletions_on_murex_chart.py")}\" - \"{pngPath}\"")
+    {
+        RedirectStandardInput = true,
+        RedirectStandardError = true,
+        UseShellExecute       = false,
+        CreateNoWindow        = true
+    };
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException();
+    await proc.StandardInput.WriteAsync(sb.ToString());
+    proc.StandardInput.Close();
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err)) _logger.LogError(err);
+    return $"/charts/{pngFile}";
+}
+
+public async Task<string> GenerateOtcIntradayRecBreaksPerWeekChartAsync(IEnumerable<OtcIntradayRecBreaksPerWeekCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var key     = "otc_intraday_rec_breaks_per_week";
+    var pngFile = $"{key}_{ts}.png";
+    var pngPath = Path.Combine(_chartDir, pngFile);
+    var sb      = new StringBuilder().AppendLine("Week,RecBreaks");
+    foreach (var d in data)
+        sb.AppendLine($"{d.Week:yyyy-MM-dd},{d.RecBreaks}");
+
+    var psi = new ProcessStartInfo("python", $"\"{Path.Combine(_scriptDir,"generate_otc_intraday_rec_breaks_per_week_chart.py")}\" - \"{pngPath}\"")
+    {
+        RedirectStandardInput = true,
+        RedirectStandardError = true,
+        UseShellExecute       = false,
+        CreateNoWindow        = true
+    };
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException();
+    await proc.StandardInput.WriteAsync(sb.ToString());
+    proc.StandardInput.Close();
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err)) _logger.LogError(err);
+    return $"/charts/{pngFile}";
+}
+
+public async Task<string> GenerateOtcTradesSavedPerMinuteChartAsync(IEnumerable<OtcTradesSavedPerMinuteCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var key     = "otc_trades_saved_per_minute";
+    var pngFile = $"{key}_{ts}.png";
+    var pngPath = Path.Combine(_chartDir, pngFile);
+    var sb      = new StringBuilder().AppendLine("Minute,TradesSaved");
+    foreach (var d in data)
+        sb.AppendLine($"{d.Minute},{d.TradesSaved}");
+
+    var psi = new ProcessStartInfo("python", $"\"{Path.Combine(_scriptDir,"generate_otc_trades_saved_per_minute_chart.py")}\" - \"{pngPath}\"")
+    {
+        RedirectStandardInput = true,
+        RedirectStandardError = true,
+        UseShellExecute       = false,
+        CreateNoWindow        = true
+    };
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException();
+    await proc.StandardInput.WriteAsync(sb.ToString());
+    proc.StandardInput.Close();
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err)) _logger.LogError(err);
+    return $"/charts/{pngFile}";
+}
+
+public async Task<string> GenerateOtcRecBreaksByReasonChartAsync(IEnumerable<OtcRecBreaksByReasonCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var key     = "otc_intraday_rec_breaks_per_reason";
+    var pngFile = $"{key}_{ts}.png";
+    var pngPath = Path.Combine(_chartDir, pngFile);
+    var sb      = new StringBuilder().AppendLine("BreakReason,Breaks,Month");
+    foreach (var d in data)
+        sb.AppendLine($"{d.BreakReason},{d.Breaks},{d.Month:yyyy-MM-dd}");
+
+    var psi = new ProcessStartInfo("python", $"\"{Path.Combine(_scriptDir,"generate_otc_rec_breaks_by_reason_chart.py")}\" - \"{pngPath}\"")
+    {
+        RedirectStandardInput = true,
+        RedirectStandardError = true,
+        UseShellExecute       = false,
+        CreateNoWindow        = true
+    };
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException();
+    await proc.StandardInput.WriteAsync(sb.ToString());
+    proc.StandardInput.Close();
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err)) _logger.LogError(err);
+    return $"/charts/{pngFile}";
+}
+
+public async Task<string> GenerateMwRecBreaksPerThousandChartAsync(IEnumerable<MwRecBreaksPerThousandCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var key     = "mw_rec_breaks_per_1000_deals";
+    var pngFile = $"{key}_{ts}.png";
+    var pngPath = Path.Combine(_chartDir, pngFile);
+    var sb      = new StringBuilder().AppendLine("Week,RecBreaksPerThousandDeals");
+    foreach (var d in data)
+        sb.AppendLine($"{d.Week:yyyy-MM-dd},{d.RecBreaksPerThousandDeals}");
+
+    var psi = new ProcessStartInfo("python", $"\"{Path.Combine(_scriptDir,"generate_mw_rec_breaks_per_thousand_chart.py")}\" - \"{pngPath}\"")
+    {
+        RedirectStandardInput = true,
+        RedirectStandardError = true,
+        UseShellExecute       = false,
+        CreateNoWindow        = true
+    };
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException();
+    await proc.StandardInput.WriteAsync(sb.ToString());
+    proc.StandardInput.Close();
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err)) _logger.LogError(err);
+    return $"/charts/{pngFile}";
+}
+```
+
+---
+
+## 6. Python scripts
+
+Place under `PythonScripts/`:
+
+**generate\_deletions\_on\_murex\_chart.py**
+
+```python
+#!/usr/bin/env python3
+import sys, pandas as pd, matplotlib.pyplot as plt
+
+def main(inp, outp):
+    src = sys.stdin if inp=='-' else inp
+    df  = pd.read_csv(src, parse_dates=['Week'])
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp); return
+
+    ax = df.plot(x='Week', y='Deals', kind='bar', figsize=(10,6))
+    for c in ax.containers: ax.bar_label(c, fmt='%.0f', label_type='edge', padding=2, fontsize=9)
+    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
+
+if __name__=='__main__':
+    if len(sys.argv)!=3: sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+**generate\_otc\_intraday\_rec\_breaks\_per\_week\_chart.py**
+
+```python
+#!/usr/bin/env python3
+import sys,pandas as pd,matplotlib.pyplot as plt
+
+def main(inp,outp):
+    src = sys.stdin if inp=='-' else inp
+    df  = pd.read_csv(src, parse_dates=['Week'])
+    if df.empty:
+        fig,ax=plt.subplots(figsize=(8,4)); ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14); ax.axis('off'); plt.savefig(outp); return
+    ax = df.plot(x='Week', y='RecBreaks', kind='bar', figsize=(10,6))
+    for c in ax.containers: ax.bar_label(c, fmt='%.0f', label_type='edge', padding=2, fontsize=9)
+    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
+
+if __name__=='__main__':
+    if len(sys.argv)!=3: sys.exit(1)
+    main(sys.argv[1],sys.argv[2])
+```
+
+**generate\_otc\_trades\_saved\_per\_minute\_chart.py**
+
+```python
+#!/usr/bin/env python3
+import sys,pandas as pd,matplotlib.pyplot as plt
+
+def main(inp,outp):
+    src = sys.stdin if inp=='-' else inp
+    df  = pd.read_csv(src)
+    if df.empty:
+        fig,ax=plt.subplots(figsize=(8,4)); ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14); ax.axis('off'); plt.savefig(outp); return
+    ax = df.plot(x='Minute', y='TradesSaved', kind='bar', figsize=(10,6))
+    for c in ax.containers: ax.bar_label(c, fmt='%.0f', label_type='edge', padding=2, fontsize=9)
+    plt.xticks(rotation=90,ha='right'); plt.tight_layout(); plt.savefig(outp)
+
+if __name__=='__main__':
+    if len(sys.argv)!=3: sys.exit(1)
+    main(sys.argv[1],sys.argv[2])
+```
+
+**generate\_otc\_rec\_breaks\_by\_reason\_chart.py**
+
+```python
+#!/usr/bin/env python3
+import sys,pandas as pd,matplotlib.pyplot as plt
+
+def main(inp,outp):
+    src = sys.stdin if inp=='-' else inp
+    df  = pd.read_csv(src, parse_dates=['Month'])
+    if df.empty:
+        fig,ax=plt.subplots(figsize=(8,4)); ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14); ax.axis('off'); plt.savefig(outp); return
+    pivot = df.pivot(index='Month', columns='BreakReason', values='Breaks').fillna(0)
+    ax = pivot.plot(kind='bar', figsize=(10,6))
+    for c in ax.containers: ax.bar_label(c, fmt='%.0f', label_type='edge', padding=2, fontsize=9)
+    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
+
+if __name__=='__main__':
+    if len(sys.argv)!=3: sys.exit(1)
+    main(sys.argv[1],sys.argv[2])
+```
+
+**generate\_mw\_rec\_breaks\_per\_thousand\_chart.py**
+
+```python
+#!/usr/bin/env python3
+import sys,pandas as pd,matplotlib.pyplot as plt
+
+def main(inp,outp):
+    src = sys.stdin if inp=='-' else inp
+    df  = pd.read_csv(src, parse_dates=['Week'])
+    if df.empty:
+        fig,ax=plt.subplots(figsize=(8,4)); ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14); ax.axis('off'); plt.savefig(outp); return
+    ax = df.plot(x='Week', y='RecBreaksPerThousandDeals', kind='bar', figsize=(10,6))
+    for c in ax.containers: ax.bar_label(c, fmt='%.1f', label_type='edge', padding=2, fontsize=9)
+    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
+
+if __name__=='__main__':
+    if len(sys.argv)!=3: sys.exit(1)
+    main(sys.argv[1],sys.argv[2])
+```
+
+---
+
+Now just invoke them in your **ChartUpdaterWorker** exactly as before. You’ve got full end-to-end C# + Python for all five charts.
+
