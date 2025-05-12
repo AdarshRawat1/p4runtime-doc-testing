@@ -1,3 +1,76 @@
+protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+{
+    using var scope = _scopeFactory.CreateScope();
+    var oracle = scope.ServiceProvider.GetRequiredService<IOracleDataService>();
+    var chartGenerator = scope.ServiceProvider.GetRequiredService<IChartGeneratorService>();
+    var metadata = new Dictionary<string, object>();
+
+    // Deletions on Murex
+    _log.LogInformation("=== Starting Deletions on Murex Chart update at {Time} ===", DateTime.UtcNow);
+    var delData = await oracle.GetDeletionsOnMurexAsync(
+        DateTime.UtcNow.AddDays(-7),
+        DateTime.UtcNow.AddDays(-1)
+    );
+    var delUrl = await chartGenerator.GenerateDeletionsOnMurexChartAsync(delData);
+    metadata["deletions_murex"] = new { ImageUrl = delUrl, LastUpdated = DateTime.UtcNow };
+    _log.LogInformation("Updated Deletions on Murex Chart → {Url}", delUrl);
+
+    // OTC Intraday Rec Breaks per Week
+    _log.LogInformation("=== Starting OTC Intraday Rec Breaks per Week Chart update at {Time} ===", DateTime.UtcNow);
+    var recWeekData = await oracle.GetOtcIntradayRecBreaksPerWeekAsync(
+        DateTime.UtcNow.AddYears(-4),
+        DateTime.UtcNow.AddDays(-1)
+    );
+    var recWeekUrl = await chartGenerator.GenerateOtcIntradayRecBreaksPerWeekChartAsync(recWeekData);
+    metadata["otc_intraday_rec_breaks_per_week"] = new { ImageUrl = recWeekUrl, LastUpdated = DateTime.UtcNow };
+    _log.LogInformation("Updated OTC Intraday Rec Breaks per Week Chart → {Url}", recWeekUrl);
+
+    // OTC Trades Saved per Minute
+    _log.LogInformation("=== Starting OTC Trades Saved per Minute Chart update at {Time} ===", DateTime.UtcNow);
+    var tsData = await oracle.GetOtcTradesSavedPerMinuteAsync(
+        DateTime.UtcNow.AddDays(-5),
+        DateTime.UtcNow.AddDays(-1)
+    );
+    var tsUrl = await chartGenerator.GenerateOtcTradesSavedPerMinuteChartAsync(tsData);
+    metadata["otc_trades_saved_per_minute"] = new { ImageUrl = tsUrl, LastUpdated = DateTime.UtcNow };
+    _log.LogInformation("Updated OTC Trades Saved per Minute Chart → {Url}", tsUrl);
+
+    // OTC Rec Breaks per Reason (last 12 months)
+    _log.LogInformation("=== Starting OTC Rec Breaks per Reason Chart update at {Time} ===", DateTime.UtcNow);
+    var recReasonData = await oracle.GetOtcRecBreaksByReasonAsync(
+        DateTime.UtcNow.AddMonths(-12),
+        DateTime.UtcNow.AddDays(-1)
+    );
+    var recReasonUrl = await chartGenerator.GenerateOtcRecBreaksByReasonChartAsync(recReasonData);
+    metadata["otc_intraday_rec_breaks_per_reason"] = new { ImageUrl = recReasonUrl, LastUpdated = DateTime.UtcNow };
+    _log.LogInformation("Updated OTC Rec Breaks per Reason Chart → {Url}", recReasonUrl);
+
+    // MW Rec Breaks per 1000 Deals (last 4 years)
+    _log.LogInformation("=== Starting MW Rec Breaks per 1000 Deals Chart update at {Time} ===", DateTime.UtcNow);
+    var mwData = await oracle.GetMwRecBreaksPerThousandAsync(
+        DateTime.UtcNow.AddYears(-4),
+        DateTime.UtcNow.AddDays(-1)
+    );
+    var mwUrl = await chartGenerator.GenerateMwRecBreaksPerThousandChartAsync(mwData);
+    metadata["mw_rec_breaks_per_1000_deals"] = new { ImageUrl = mwUrl, LastUpdated = DateTime.UtcNow };
+    _log.LogInformation("Updated MW Rec Breaks per 1000 Deals Chart → {Url}", mwUrl);
+
+    // Write metadata.json
+    var metaPath = Path.Combine(_chartDir, "metadata.json");
+    await File.WriteAllTextAsync(
+        metaPath,
+        JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true })
+    );
+
+    // Cleanup old PNGs
+    var files = Directory.GetFiles(_chartDir, "*.png")
+                         .OrderByDescending(f => File
+
+
+
+
+
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
