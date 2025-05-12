@@ -712,3 +712,113 @@ public async Task<string> GenerateContractsSentToBackOfficeChartAsync(
     return $"/charts/{pngFile}";
 }
 
+
+
+
+
+
+
+
+
+
+
+public async Task<string> GenerateOtcManualWorkflowTradesPerWeekChartAsync(
+    IEnumerable<OtcManualWorkflowTradesPerWeekCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var key     = "otc_manual_workflow_trades_per_week";
+    var pngFile = $"{key}_{ts}.png";
+    var pngPath = Path.Combine(_chartDir, pngFile);
+
+    var sb = new StringBuilder();
+    sb.AppendLine("Week,ManuDeals");
+    foreach (var d in data)
+        sb.AppendLine($"{d.Week:yyyy-MM-dd},{d.ManuDeals}");
+
+    var script = Path.Combine(_scriptDir, "generate_otc_manual_workflow_trades_per_week_chart.py");
+    var psi = new ProcessStartInfo("python", $"\"{script}\" - \"{pngPath}\"")
+    {
+        RedirectStandardInput  = true,
+        RedirectStandardError  = true,
+        UseShellExecute        = false,
+        CreateNoWindow         = true
+    };
+
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start Python");
+    await proc.StandardInput.WriteAsync(sb.ToString());
+    proc.StandardInput.Close();
+
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err))
+        _log.LogError(err);
+
+    return $"/charts/{pngFile}";
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+public async Task<string> GenerateOtcManualWorkflowTradesPerWeekChartAsync(
+    IEnumerable<OtcManualWorkflowTradesPerWeekCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var key     = "otc_manual_workflow_trades_per_week";
+    var pngFile = $"{key}_{ts}.png";
+    var pngPath = Path.Combine(_chartDir, pngFile);
+
+    var sb = new StringBuilder();
+    sb.AppendLine("Week,ManuDeals");
+    foreach (var d in data)
+        sb.AppendLine($"{d.Week:yyyy-MM-dd},{d.ManuDeals}");
+
+    var script = Path.Combine(_scriptDir, "generate_otc_manual_workflow_trades_per_week_chart.py");
+    var psi = new ProcessStartInfo("python", $"\"{script}\" - \"{pngPath}\"")
+    {
+        RedirectStandardInput  = true,
+        RedirectStandardError  = true,
+        UseShellExecute        = false,
+        CreateNoWindow         = true
+    };
+
+    using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start Python");
+    await proc.StandardInput.WriteAsync(sb.ToString());
+    proc.StandardInput.Close();
+
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err))
+        _log.LogError(err);
+
+    return $"/charts/{pngFile}";
+}
+
+
+
+
+
+
+
+ source = inp if inp != '-' else sys.stdin
+    df = pd.read_csv(source, parse_dates=['Week'])
+
+
+
+
+
