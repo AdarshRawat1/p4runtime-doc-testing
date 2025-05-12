@@ -1,3 +1,10 @@
+ <ChartBox GraphId="deletions_murex" Title="Deletions on Murex" />
+    <ChartBox GraphId="otc_intraday_rec_breaks_per_week" Title="OTC Intraday Rec Breaks per Week" />
+    <ChartBox GraphId="otc_trades_saved_per_minute" Title="OTC Trades Saved per Minute" />
+    <ChartBox GraphId="otc_intraday_rec_breaks_per_reason" Title="OTC Rec Breaks per Reason" />
+    <ChartBox GraphId="mw_rec_breaks_per_1000_deals" Title="MW Rec Breaks per 1000 Deals" />
+
+
 protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 {
     using var scope = _scopeFactory.CreateScope();
