@@ -1,47 +1,11 @@
-Below is your ChartUpdaterWorker’s ExecuteAsync method, updated to use the in-memory CSV→stdin approach for both STP workflow and Error Correction charts, matching exactly your existing worker format and without extra comments:
+_log.LogInformation("Starting OTC Manual Workflow Trades per Week Chart update");
+    var otcData = await oracle.GetOtcManualWorkflowTradesPerWeekAsync(fromDate, toDate);
+    var otcUrl  = await chartGenerator.GenerateOtcManualWorkflowTradesPerWeekChartAsync(otcData);
+    metadata["otc_manual_workflow_trades_per_week"] = new { ImageUrl = otcUrl, LastUpdated = DateTime.UtcNow };
+    _log.LogInformation("Updated OTC Manual Workflow Trades per Week Chart → {Url}", otcUrl);
 
-protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-{
-    using var scope     = _scopeFactory.CreateScope();
-    var oracle          = scope.ServiceProvider.GetRequiredService<IOracleDataService>();
-    var chartGenerator  = scope.ServiceProvider.GetRequiredService<IChartGeneratorService>();
-    var metadata        = new Dictionary<string, object>();
-
-    // STP Workflow trades per week
-    _log.LogInformation("Starting STP Workflow Chart update");
-    var stpData = await oracle.GetStpWorkflowAsync(
-                      DateTime.UtcNow.AddYears(-4),
-                      DateTime.UtcNow.AddDays(-1));
-    var stpUrl  = await chartGenerator.GenerateStpWorkflowChartAsync(stpData);
-    metadata["stp_workflow"] = new { ImageUrl = stpUrl, LastUpdated = DateTime.UtcNow };
-    _log.LogInformation("Updated STP Workflow Chart → {Url}", stpUrl);
-
-    // Error Correction deals per week
-    _log.LogInformation("Starting Error Correction Chart update");
-    var ecData = await oracle.GetErrorCorrectionCountsAsync(
-                     DateTime.UtcNow.AddYears(-4),
-                     DateTime.UtcNow.AddDays(-1));
-    var ecUrl  = await chartGenerator.GenerateErrorCorrectionChartAsync(ecData);
-    metadata["error_corrections"] = new { ImageUrl = ecUrl, LastUpdated = DateTime.UtcNow };
-    _log.LogInformation("Updated Error Correction Chart → {Url}", ecUrl);
-
-    // Write metadata.json
-    var metaPath = Path.Combine(_chartDir, "metadata.json");
-    await File.WriteAllTextAsync(
-        metaPath,
-        JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true }));
-
-    // Cleanup old PNGs
-    var files = Directory.GetFiles(_chartDir, "*.png")
-                         .OrderByDescending(f => File.GetCreationTimeUtc(f))
-                         .Skip(_maxKeep);
-    foreach (var f in files)
-        File.Delete(f);
-}
-
-Make sure your IOracleDataService exposes:
-
-Task<IEnumerable<StpWorkflowCount>> GetStpWorkflowAsync(DateTime fromDate, DateTime toDate);
-Task<IEnumerable<ErrorCorrectionCount>> GetErrorCorrectionCountsAsync(DateTime fromDate, DateTime toDate);
-
-and that your Generate*ChartAsync methods now read CSV data from stdin (using - as the input flag) as shown previously.
+    _log.LogInformation("Starting Contracts Sent to Back Office Chart update");
+    var cboData = await oracle.GetContractsSentToBackOfficeAsync(fromDate, toDate);
+    var cboUrl  = await chartGenerator.GenerateContractsSentToBackOfficeChartAsync(cboData);
+    metadata["contracts_backoffice"] = new { ImageUrl = cboUrl, LastUpdated = DateTime.UtcNow };
+    _log.LogInformation("Updated Contracts Sent to Back Office Chart → {Url}", cboUrl);
