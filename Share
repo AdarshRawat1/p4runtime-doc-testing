@@ -1,71 +1,190 @@
-    // OTC Manual Workflow Trades per week
-    _log.LogInformation("=== Starting OTC Manual Workflow Trades per Week update at {Time} ===", DateTime.UtcNow);
-    var otcData = await oracle.GetOtcManualWorkflowTradesPerWeekAsync(DateTime.UtcNow.AddYears(-4),DateTime.UtcNow.AddDays(-1));
-    var otcUrl  = await chartGenerator.GenerateOtcManualWorkflowTradesPerWeekChartAsync(otcData);
-    metadata["otc_manual_workflow_trades_per_week"] = new { ImageUrl = otcUrl, LastUpdated = DateTime.UtcNow };
-    _log.LogInformation("Updated OTC Manual Workflow Trades per Week Chart → {Url}", otcUrl);
+ // ChartGeneratorService.cs
 
-    // Contracts sent to back office per month
-    _log.LogInformation("=== Starting Contracts Sent to Back Office update at {Time} ===", DateTime.UtcNow);
-    var cboData = await oracle.GetContractsSentToBackOfficeAsync(DateTime.UtcNow.AddYears(-4),DateTime.UtcNow.AddDays(-1));
-    var cboUrl  = await chartGenerator.GenerateContractsSentToBackOfficeChartAsync(cboData);
-    metadata["contracts_backoffice"] = new { ImageUrl = cboUrl, LastUpdated = DateTime.UtcNow };
-    _log.LogInformation("Updated Contracts Sent to Back Office Chart → {Url}", cboUrl);
+public async Task<string> GenerateOtcManualWorkflowTradesPerWeekChartAsync(IEnumerable<OtcManualWorkflowTradesPerWeekCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir, $"otc_manual_workflow_trades_per_week_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"otc_manual_workflow_trades_per_week_{ts}.png");
 
+    await File.WriteAllTextAsync(csvPath,
+        "Week,ManuDeals\n" +
+        string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.ManuDeals}"))
+    );
 
-
-
-
-
-
-public async Task<IEnumerable<OtcManualWorkflowTradesPerWeekCount>>
-        GetOtcManualWorkflowTradesPerWeekAsync(DateTime fromDate, DateTime toDate)
+    var script = Path.Combine(_scriptDir, "generate_otc_manual_workflow_trades_per_week_chart.py");
+    var psi    = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
     {
-        var list = new List<OtcManualWorkflowTradesPerWeekCount>();
-        await using var conn = new OracleConnection(_connectionString);
-        await conn.OpenAsync();
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
 
-        const string sql = @"
-WITH otc_workflow_hist AS (
-    SELECT *
-      FROM star_workflow_hist
-     WHERE con_no IN (SELECT con_no FROM star_contract PARTITION(product_oth))
-),
-manu AS (
-    SELECT DISTINCT con_no
-      FROM otc_workflow_hist
-     WHERE ops_sts_cod = 'NOT'
-)
-SELECT TRUNC(w.lst_mod_dt,'DAY') AS Week,
-       COUNT(1)                  AS ManuDeals
-  FROM (
-    SELECT h.con_no, h.lst_mod_dt
-      FROM otc_workflow_hist h
-     WHERE (h.con_no, h.lst_mod_dt) IN (
-         SELECT con_no, MIN(lst_mod_dt)
-           FROM otc_workflow_hist
-          WHERE con_no IN (SELECT con_no FROM manu)
-          GROUP BY con_no
-     )
-  ) w
- WHERE w.lst_mod_dt BETWEEN :fromDate AND :toDate
- GROUP BY TRUNC(w.lst_mod_dt,'DAY')
- ORDER BY Week ASC";
+    using var proc = Process.Start(psi) 
+                  ?? throw new InvalidOperationException("Cannot start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
 
-        await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-        cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
-        cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
 
-        await using var rdr = await cmd.ExecuteReaderAsync();
-        while (await rdr.ReadAsync())
-        {
-            list.Add(new OtcManualWorkflowTradesPerWeekCount
-            {
-                Week      = rdr.GetDateTime(rdr.GetOrdinal("Week")),
-                ManuDeals = rdr.GetInt32 (rdr.GetOrdinal("ManuDeals"))
-            });
-        }
+public async Task<string> GenerateContractsSentToBackOfficeChartAsync(IEnumerable<ContractsSentToBackOfficeCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir, $"contracts_backoffice_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"contracts_backoffice_{ts}.png");
 
-        return list;
-    }
+    await File.WriteAllTextAsync(csvPath,
+        "BackOffice,Deals,Month\n" +
+        string.Join("\n", data.Select(d => $"{d.BackOffice},{d.Deals},{d.Month:yyyy-MM-dd}"))
+    );
+
+    var script = Path.Combine(_scriptDir, "generate_contracts_sent_to_back_office_chart.py");
+    var psi    = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Cannot start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+
+public async Task<string> GenerateDeletionsOnMurexChartAsync(IEnumerable<DeletionsOnMurexCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir, $"deletions_murex_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"deletions_murex_{ts}.png");
+
+    await File.WriteAllTextAsync(csvPath,
+        "Week,Deals\n" +
+        string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.Deals}"))
+    );
+
+    var script = Path.Combine(_scriptDir, "generate_deletions_on_murex_chart.py");
+    var psi    = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Cannot start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+
+public async Task<string> GenerateOtcIntradayRecBreaksPerWeekChartAsync(IEnumerable<OtcIntradayRecBreaksPerWeekCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir, $"otc_intraday_rec_breaks_per_week_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"otc_intraday_rec_breaks_per_week_{ts}.png");
+
+    await File.WriteAllTextAsync(csvPath,
+        "Week,RecBreaks\n" +
+        string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.RecBreaks}"))
+    );
+
+    var script = Path.Combine(_scriptDir, "generate_otc_intraday_rec_breaks_per_week_chart.py");
+    var psi    = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Cannot start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+
+public async Task<string> GenerateOtcTradesSavedPerMinuteChartAsync(IEnumerable<OtcTradesSavedPerMinuteCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir, $"otc_trades_saved_per_minute_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"otc_trades_saved_per_minute_{ts}.png");
+
+    await File.WriteAllTextAsync(csvPath,
+        "Minute,TradesSaved\n" +
+        string.Join("\n", data.Select(d => $"{d.Minute},{d.TradesSaved}"))
+    );
+
+    var script = Path.Combine(_scriptDir, "generate_otc_trades_saved_per_minute_chart.py");
+    var psi    = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Cannot start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+
+public async Task<string> GenerateOtcRecBreaksByReasonChartAsync(IEnumerable<OtcRecBreaksByReasonCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir, $"otc_rec_breaks_by_reason_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"otc_rec_breaks_by_reason_{ts}.png");
+
+    await File.WriteAllTextAsync(csvPath,
+        "BreakReason,Breaks,Month\n" +
+        string.Join("\n", data.Select(d => $"{d.BreakReason},{d.Breaks},{d.Month:yyyy-MM-dd}"))
+    );
+
+    var script = Path.Combine(_scriptDir, "generate_otc_rec_breaks_by_reason_chart.py");
+    var psi    = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Cannot start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+
+public async Task<string> GenerateMwRecBreaksPerThousandChartAsync(IEnumerable<MwRecBreaksPerThousandCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir, $"mw_rec_breaks_per_1000_deals_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"mw_rec_breaks_per_1000_deals_{ts}.png");
+
+    await File.WriteAllTextAsync(csvPath,
+        "Week,RecBreaksPerThousandDeals\n" +
+        string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.RecBreaksPerThousandDeals:F2}"))
+    );
+
+    var script = Path.Combine(_scriptDir, "generate_mw_rec_breaks_per_thousand_chart.py");
+    var psi    = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Cannot start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
 }
