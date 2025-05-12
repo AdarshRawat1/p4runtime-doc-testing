@@ -1,41 +1,335 @@
+Below is the full 8-step “copy-and-paste” pattern applied to your **Contracts sent to back office system per month** chart. Just follow these snippets (updating namespaces as needed) to wire it end-to-end:
+
+---
+
+## 1. Model
+
+**File:** `Models/ContractsSentToBackOfficeCount.cs`
+
+```csharp
+namespace StarTrends.Models
+{
+    public class ContractsSentToBackOfficeCount
+    {
+        public string BackOffice { get; set; }     // DECODE(wf.ext_sys_cod…)
+        public int Deals { get; set; }            // COUNT(*)
+        public DateTime Month { get; set; }       // TRUNC(c.inp_dt,'MONTH') or TRUNC(o.exp_dt,'MONTH')
+    }
+}
+```
+
+---
+
+## 2. Data service interface
+
+**File:** `Services/IOracleDataService.cs`
+
+```csharp
+using StarTrends.Models;
+
+public interface IOracleDataService
+{
+    // …other methods…
+
+    Task<IEnumerable<ContractsSentToBackOfficeCount>> 
+        GetContractsSentToBackOfficeAsync(DateTime fromDate, DateTime toDate);
+}
+```
+
+---
+
+## 3. Data service implementation
+
+**File:** `Services/OracleDataService.cs`
+
+```csharp
+using Oracle.ManagedDataAccess.Client;
+using StarTrends.Models;
+
+public class OracleDataService : IOracleDataService
+{
+    private readonly string _connectionString;
+    public OracleDataService(IConfiguration config)
+        => _connectionString = config.GetConnectionString("Oracle");
+
+    public async Task<IEnumerable<ContractsSentToBackOfficeCount>> 
+        GetContractsSentToBackOfficeAsync(DateTime fromDate, DateTime toDate)
+    {
+        var results = new List<ContractsSentToBackOfficeCount>();
+
+        await using var conn = new OracleConnection(_connectionString);
+        await conn.OpenAsync();
+
+        const string sql = @"
+WITH cte1 AS (
+  SELECT DECODE(wf.ext_sys_cod,
+       'BTR','BND2','BD2','BND2','UBX','Ubix','UB2','Ubix',wf.ext_sys_cod) AS BackOffice,
+       COUNT(*) AS Deals,
+       TRUNC(c.inp_dt,'MONTH') AS Month
+    FROM star_workflow wf
+    JOIN star_contract c
+      ON c.con_no = wf.con_no
+   WHERE wf.ext_sys_cod IS NOT NULL
+     AND c.inp_dt BETWEEN :fromDate AND :toDate
+   GROUP BY TRUNC(c.inp_dt,'MONTH'), wf.ext_sys_cod
+),
+cte2 AS (
+  SELECT 'OMR' AS BackOffice,
+         COUNT(*) AS Deals,
+         TRUNC(o.exp_dt,'MONTH') AS Month
+    FROM star_omr_exp o
+   WHERE o.exp_dt BETWEEN :fromDate AND :toDate
+   GROUP BY TRUNC(o.exp_dt,'MONTH')
+)
+SELECT * FROM (
+  SELECT * FROM cte1
+  UNION ALL
+  SELECT * FROM cte2
+) ORDER BY BackOffice, Month";
+
+        await using var cmd = new OracleCommand(sql, conn)
+        {
+            BindByName = true
+        };
+        cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+        cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            results.Add(new ContractsSentToBackOfficeCount
+            {
+                BackOffice = reader.GetString(reader.GetOrdinal("BackOffice")),
+                Deals      = reader.GetInt32(reader.GetOrdinal("Deals")),
+                Month      = reader.GetDateTime(reader.GetOrdinal("Month"))
+            });
+        }
+
+        return results;
+    }
+}
+```
+
+---
+
+## 4. Chart generator interface
+
+**File:** `Services/IChartGeneratorService.cs`
+
+```csharp
+using StarTrends.Models;
+
+public interface IChartGeneratorService
+{
+    // …other GenerateXChartAsync…
+
+    /// <summary>
+    /// Renders a PNG bar‐chart from your data and returns its relative URL.
+    /// </summary>
+    Task<string> GenerateContractsSentToBackOfficeChartAsync(
+        IEnumerable<ContractsSentToBackOfficeCount> data);
+}
+```
+
+---
+
+## 5. Chart generator implementation
+
+**File:** `Services/ChartGeneratorService.cs`
+
+```csharp
+using System.Diagnostics;
+using StarTrends.Models;
+
+public class ChartGeneratorService : IChartGeneratorService
+{
+    private readonly string _csvDir;
+    private readonly string _chartsDir;
+    private readonly ILogger<ChartGeneratorService> _logger;
+
+    public ChartGeneratorService(IConfiguration config,
+        ILogger<ChartGeneratorService> logger)
+    {
+        _csvDir    = config["Paths:CsvDir"];
+        _chartsDir = config["Paths:ChartDir"];
+        _logger    = logger;
+    }
+
+    public async Task<string> GenerateContractsSentToBackOfficeChartAsync(
+        IEnumerable<ContractsSentToBackOfficeCount> data)
+    {
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+        var key       = "contracts_backoffice";
+        var csvFile   = Path.Combine(_csvDir, $"{key}_{timestamp}.csv");
+        var pngFile   = $"{key}_{timestamp}.png";
+        var pngPath   = Path.Combine(_chartsDir, pngFile);
+
+        // 1. Dump CSV
+        using (var writer = new StreamWriter(csvFile))
+        {
+            writer.WriteLine("BackOffice,Deals,Month");
+            foreach (var row in data)
+                writer.WriteLine(
+                  $"{row.BackOffice},{row.Deals},{row.Month:yyyy-MM-dd}");
+        }
+
+        // 2. Start Python
+        var psi = new ProcessStartInfo
+        {
+            FileName               = "python",
+            Arguments              = $"generate_contracts_sent_to_back_office_chart.py \"{csvFile}\" \"{pngPath}\"",
+            RedirectStandardError  = true,
+            UseShellExecute        = false,
+            CreateNoWindow         = true
+        };
+
+        using var proc = Process.Start(psi);
+        string stderr = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+
+        if (proc.ExitCode != 0)
+            _logger.LogError("Chart script error: {Err}", stderr);
+
+        // 3. Return web‐relative URL
+        return $"/charts/{pngFile}";
+    }
+}
+```
+
+---
+
+## 6. Python script
+
+**File:** `PythonScripts/generate_contracts_sent_to_back_office_chart.py`
+
+```python
+#!/usr/bin/env python3
+# Usage: python generate_contracts_sent_to_back_office_chart.py <in.csv> <out.png>
+# -*- coding: utf-8 -*-
+
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
 def main(inp, outp):
-    # read CSV
-    df = pd.read_csv(inp)
-
-    # if no data, render “No data” image
+    df = pd.read_csv(inp, parse_dates=['Month'])
     if df.empty:
         fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data for this period',
-                ha='center', va='center', fontsize=14)
+        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
         ax.axis('off')
         plt.savefig(outp)
         return
 
-    # plot bar chart
-    ax = df.plot(
-        x='MarketEventName',
-        y='MEVS',
-        kind='bar',
-        figsize=(10,6)
-    )
+    # pivot so each BackOffice is a series
+    pivot = df.pivot(index='Month', columns='BackOffice', values='Deals').fillna(0)
 
-    # add value labels on each bar
+    ax = pivot.plot(kind='bar', figsize=(10,6))
     for container in ax.containers:
-        ax.bar_label(container, fmt="%.0f", label_type="edge", padding=2, fontsize=9)
+        ax.bar_label(container, fmt='%.0f', label_type='edge', padding=2, fontsize=9)
 
-    # formatting
     plt.xticks(rotation=45, ha='right')
-    plt.ylabel('Number of Events')
-    plt.xlabel('Market Event')
     plt.tight_layout()
     plt.savefig(outp)
 
 if __name__ == '__main__':
     if len(sys.argv) != 3:
-        print("Usage: python generate_market_event_chart.py <in.csv> <out.png>", file=sys.stderr)
+        print("Usage: python … <in.csv> <out.png>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
+```
+
+---
+
+## 7. Worker integration
+
+**File:** `Workers/ChartUpdaterWorker.cs`
+
+```csharp
+using Microsoft.Extensions.Hosting;
+using StarTrends.Services;
+
+public class ChartUpdaterWorker : BackgroundService
+{
+    private readonly IOracleDataService _oracle;
+    private readonly IChartGeneratorService _chartGen;
+    private readonly string _chartDir;
+    private readonly string _csvDir;
+    private readonly int _maxKeep = 10;
+    private readonly IHostApplicationLifetime _lifetime;
+
+    public ChartUpdaterWorker(
+        IOracleDataService oracle,
+        IChartGeneratorService chartGen,
+        IConfiguration config,
+        IHostApplicationLifetime lifetime)
+    {
+        _oracle   = oracle;
+        _chartGen = chartGen;
+        _chartDir = config["Paths:ChartDir"];
+        _csvDir   = config["Paths:CsvDir"];
+        _lifetime = lifetime;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // example: run once at startup (or loop with delay)
+        var fromDate = DateTime.UtcNow.AddYears(-4);
+        var toDate   = DateTime.UtcNow.AddMonths(-1);
+
+        var data = await _oracle.GetContractsSentToBackOfficeAsync(fromDate, toDate);
+        var url  = await _chartGen.GenerateContractsSentToBackOfficeChartAsync(data);
+
+        // write or update metadata.json
+        var meta = new Dictionary<string, object>();
+        // load existing, merge, then:
+        meta["contracts_backoffice"] = new {
+            ImageUrl   = url,
+            LastUpdated = DateTime.UtcNow
+        };
+        File.WriteAllText(
+          Path.Combine(_chartDir, "metadata.json"),
+          JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
+
+        // cleanup old files
+        CleanupOldFiles(_chartDir, "*.png", _maxKeep);
+        CleanupOldFiles(_csvDir,   "*.csv", _maxKeep);
+
+        // then optionally exit or wait for next interval
+        _lifetime.StopApplication();
+    }
+
+    private void CleanupOldFiles(string dir, string pattern, int keep)
+    {
+        var files = Directory.GetFiles(dir, pattern)
+            .OrderByDescending(f => File.GetCreationTimeUtc(f))
+            .Skip(keep);
+        foreach (var f in files) File.Delete(f);
+    }
+}
+```
+
+---
+
+## 8. UI component
+
+Reuse your `Shared/GraphBox.razor` everywhere—no changes needed there. To show *this* chart on, say, `/Pages/Product.razor`, just:
+
+```razor
+<GraphBox GraphId="contracts_backoffice"
+          Title="Contracts sent to back office system per month" />
+```
+
+Your `GraphBox` will fetch `/charts/metadata.json`, pick out `contracts_backoffice`, show the PNG (`?t=` cache-buster), and render loading/error states automatically.
+
+---
+
+### ✅ Backlog / Nice-to-haves
+
+* Per-chart refresh interval (from `appsettings.json`)
+* “Refresh All” button in a top-bar controller
+* Stream CSV→Python via stdin to avoid temp files
+* Long-lived Python subprocess pool
+
+---
+
+Just copy these eight steps (models → UI) for *every* new chart, and you’ll have a fully modular Blazor + .NET 8 → Python → Oracle dashboard.
