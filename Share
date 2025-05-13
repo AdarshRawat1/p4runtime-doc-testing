@@ -1,3 +1,19 @@
+# reset your branch to its original state
+git checkout dev-StarTrends
+git reset --hard refs/original/refs/heads/dev-StarTrends
+
+# remove the backup refs so you don’t accidentally push them
+git for-each-ref --format="%(refname)" refs/original/ | \
+  xargs -n1 git update-ref -d
+
+# expire reflogs & prune so no garbage lingers
+git reflog expire --expire=now --all
+git gc --prune=now --aggressive
+
+
+
+
+
 git checkout dev-StarTrends
 
 git filter-branch --force `
