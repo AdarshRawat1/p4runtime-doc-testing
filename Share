@@ -1,3 +1,16 @@
+ <div class="col-md-6">
+    <ChartBox GraphId="otc_top5_rec_breaks_3d"
+              Title="OTC Top 5 Rec Breaks by Product & Reason (3D)" />
+  </div>
+  <div class="col-md-6">
+    <ChartBox GraphId="mtm_contracts_booked"
+              Title="MTM Contracts Booked per Week" />
+  </div>
+  <div class="col-md-6">
+    <ChartBox GraphId="otc_contracts_booked_vs_avg"
+              Title="OTC Contracts Booked per Week vs. 4-Week Avg" />
+
+
 Below are the **full, drop‐in** implementations for the first **four** charts in your list.  We’ll handle the remaining ones in the next chat.
 
 ---
