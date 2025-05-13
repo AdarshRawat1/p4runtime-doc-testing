@@ -1,85 +1,97 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+public interface IChartGeneratorService
+{
+    // … existing signatures …
+    Task<string> GenerateOtcIntradayRecBreaksPerWeekChartAsync(
+        IEnumerable<OtcIntradayRecBreaksPerWeekCount> data);
 
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
+    Task<string> GenerateOtcTradesSavedPerMinuteChartAsync(
+        IEnumerable<OtcTradesSavedPerMinuteCount> data);
+}
 
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Minute'])
-    if df.empty:
-        fig = plt.figure(figsize=(8,4))
-        ax  = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
+public class ChartGeneratorService : IChartGeneratorService
+{
+    private readonly string _csvDir;
+    private readonly string _chartDir;
+    private readonly string _scriptDir;
+    private readonly ILogger<ChartGeneratorService> _log;
 
-    fig = plt.figure(figsize=(12,6))
-    ax  = fig.add_subplot(111)
-    ax.bar(df['Minute'], df['TradesSaved'])
-    ax.set_ylabel('Trades saved')
-    ax.set_title('OTC Trades Saved per Minute (Last 5 days)')
+    public ChartGeneratorService(
+        IConfiguration config,
+        ILogger<ChartGeneratorService> log)
+    {
+        _csvDir    = config["Paths:CsvDir"];
+        _chartDir  = config["Paths:ChartDir"];
+        _scriptDir = config["Paths:PythonScripts"];
+        _log       = log;
+    }
 
-    plt.xticks(rotation=45,ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
+    public async Task<string> GenerateOtcIntradayRecBreaksPerWeekChartAsync(
+        IEnumerable<OtcIntradayRecBreaksPerWeekCount> data)
+    {
+        var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+        var csvPath = Path.Combine(_csvDir, $"otc_intraday_rec_breaks_per_week_{ts}.csv");
+        var pngPath = Path.Combine(_chartDir, $"otc_intraday_rec_breaks_per_week_{ts}.png");
 
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_otc_trades_saved_per_minute_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
+        // 1) write the CSV
+        await File.WriteAllTextAsync(csvPath,
+            "Week,RecBreaks\n" +
+            string.Join("\n", data.Select(d =>
+                $"{d.Week:yyyy-MM-dd},{d.RecBreaks}"))
+        );
 
+        // 2) call the Python script
+        var script = Path.Combine(_scriptDir,
+            "generate_otc_intraday_rec_breaks_per_week_chart.py");
+        var psi = new ProcessStartInfo("python",
+                $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+        {
+            RedirectStandardError = true,
+            UseShellExecute        = false,
+            RedirectStandardInput  = false
+        };
 
+        using var proc = Process.Start(psi)
+                         ?? throw new InvalidOperationException("Cannot start Python");
+        var err = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        if (!string.IsNullOrEmpty(err))
+            _log.LogError(err);
 
+        return $"/charts/{Path.GetFileName(pngPath)}";
+    }
 
+    public async Task<string> GenerateOtcTradesSavedPerMinuteChartAsync(
+        IEnumerable<OtcTradesSavedPerMinuteCount> data)
+    {
+        var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+        var csvPath = Path.Combine(_csvDir, $"otc_trades_saved_per_minute_{ts}.csv");
+        var pngPath = Path.Combine(_chartDir, $"otc_trades_saved_per_minute_{ts}.png");
 
+        await File.WriteAllTextAsync(csvPath,
+            "Minute,TradesSaved\n" +
+            string.Join("\n", data.Select(d =>
+                $"{d.Minute:yyyy-MM-dd HH:mm},{d.TradesSaved}"))
+        );
 
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+        var script = Path.Combine(_scriptDir,
+            "generate_otc_trades_saved_per_minute_chart.py");
+        var psi = new ProcessStartInfo("python",
+                $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+        {
+            RedirectStandardError = true,
+            UseShellExecute        = false,
+            RedirectStandardInput  = false
+        };
 
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
+        using var proc = Process.Start(psi)
+                         ?? throw new InvalidOperationException("Cannot start Python");
+        var err = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        if (!string.IsNullOrEmpty(err))
+            _log.LogError(err);
 
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig = plt.figure(figsize=(8,4))
-        ax  = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
+        return $"/charts/{Path.GetFileName(pngPath)}";
+    }
 
-    fig = plt.figure(figsize=(12,6))
-    ax  = fig.add_subplot(111)
-    ax.bar(df['Week'], df['RecBreaks'])
-    ax.set_ylabel('Rec Breaks')
-    ax.set_title('OTC Intraday Rec Breaks per Week')
-
-    plt.xticks(rotation=45,ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_otc_intraday_rec_breaks_per_week_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    // … the rest of your generator methods …
+}
