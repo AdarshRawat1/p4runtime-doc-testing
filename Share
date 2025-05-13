@@ -1,9 +1,6 @@
-git filter-branch \
-  --index-filter 'git rm --cached --ignore-unmatch path/to/yourfile.ext' \
+git filter-branch --force `
+  --index-filter "git rm --cached --ignore-unmatch StarTrends/ChartUpdater/appsettings.json" `
   --prune-empty --tag-name-filter cat -- --all
-
-
-
 
 
 
