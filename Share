@@ -1,3 +1,12 @@
+git checkout dev-StarTrends
+
+git filter-branch --force `
+  --index-filter "git rm --cached --ignore-unmatch StarTrends/ChartUpdater/appsettings.json" `
+  --prune-empty --tag-name-filter cat -- dev-StarTrends
+
+WS
+
+
 git filter-branch --force `
   --index-filter "git rm --cached --ignore-unmatch StarTrends/ChartUpdater/appsettings.json" `
   --prune-empty --tag-name-filter cat -- --all
