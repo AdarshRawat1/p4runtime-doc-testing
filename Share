@@ -1,345 +1,85 @@
 #!/usr/bin/env python3
-# -- coding: utf-8 --
-
-import sys, matplotlib, matplotlib.pyplot as plt
-
-print("PYTHON EXE:   ", sys.executable, file=sys.stderr)
-print("sys.path[0]:  ", sys.path[0], file=sys.stderr)
-print("FULL sys.path:", sys.path, file=sys.stderr)
-print("MPL _file: ", getattr(matplotlib, 'file', '<no __file_>'), file=sys.stderr)
-print("MPL version?:", getattr(matplotlib, '_version', '<no __version_>'), file=sys.stderr)
-print("HAS figure?  ", hasattr(plt, 'figure'), file=sys.stderr)
-print("HAS subplots?", hasattr(plt, 'subplots'), file=sys.stderr)
-
-
-
-import sys, matplotlib, matplotlib.pyplot as plt
-
-print("PYTHON EXE:", sys.executable, file=sys.stderr)
-print("MATPLOTLIB FILE:", getattr(matplotlib, '_file_', '—no file—'), file=sys.stderr)
-print("MATPLOTLIB VERSION:", matplotlib._version_, file=sys.stderr)
-print("HAS figure?:", hasattr(plt, 'figure'), file=sys.stderr)
-print("HAS subplots?:", hasattr(plt, 'subplots'), file=sys.stderr)s
-
-
-
-import sys, matplotlib
-print(f"EXECUTABLE = {sys.executable}", file=sys.stderr)
-print(f"MATPLOTLIB = {matplotlib.__file__} @ {matplotlib.__version__}", file=sys.stderr)
-
-
-
-
-git checkout dev-StarTrends
-
-git filter-branch --force \
-  --index-filter "git rm --cached --ignore-unmatch StarTrends/ChartUpdater/appsettings.json" \
-  --prune-empty \
-  HEAD~3..HEAD
-
-git push origin dev-StarTrends --force
-
-
-
-
-
-git filter-branch --force `
-  --index-filter "git rm --cached --ignore-unmatch StarTrends/ChartUpdater/appsettings.json" `
-  --prune-empty --tag-name-filter cat -- --all
-
-
-
-
-# File: generate_product_trade_chart.py
-```python
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
 def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Date'])
+    df = pd.read_csv(inp, parse_dates=['Minute'])
     if df.empty:
-        fig = plt.figure(figsize=(8, 4))
+        fig = plt.figure(figsize=(8,4))
         ax  = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
+        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
         ax.axis('off')
         plt.savefig(outp)
         return
 
-    df = df.groupby('Date', as_index=False)['Trades'].sum()
-
-    fig = plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(12,6))
     ax  = fig.add_subplot(111)
-    ax.plot(df['Date'], df['Trades'], marker='o', linestyle='-')
-    ax.set_ylabel('Product Trades')
-    ax.set_title('Product Trades Over Time')
+    ax.bar(df['Minute'], df['TradesSaved'])
+    ax.set_ylabel('Trades saved')
+    ax.set_title('OTC Trades Saved per Minute (Last 5 days)')
 
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b'))
-    fig.autofmt_xdate()
-
+    plt.xticks(rotation=45,ha='right')
     plt.tight_layout()
     plt.savefig(outp)
 
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print('Usage: python generate_product_trade_chart.py <csv> <png>', file=sys.stderr)
+if __name__=='__main__':
+    if len(sys.argv)!=3:
+        print("Usage: python generate_otc_trades_saved_per_minute_chart.py <in.csv> <out.png>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
-```
 
-# File: generate_location_deals_product_chart.py
-```python
+
+
+
+
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig = plt.figure(figsize=(8, 4))
-        ax  = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-
-    df = df.groupby(['LocCod', 'ProductTypeName'], as_index=False)['TotalDeals'].sum()
-    pivot = df.pivot(index='LocCod', columns='ProductTypeName', values='TotalDeals').fillna(0)
-
-    fig = plt.figure(figsize=(12, 6))
-    ax  = fig.add_subplot(111)
-    pivot.plot(kind='bar', ax=ax)
-    ax.set_ylabel('Total Deals')
-    ax.set_title('Location Deal Counts by Product')
-
-    ax.legend(title='ProductType')
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print('Usage: python generate_location_deals_product_chart.py <csv> <png>', file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-# File: generate_deletions_on_murex_chart.py
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
 def main(inp, outp):
     df = pd.read_csv(inp, parse_dates=['Week'])
     if df.empty:
-        fig = plt.figure(figsize=(8, 4))
+        fig = plt.figure(figsize=(8,4))
         ax  = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
+        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
         ax.axis('off')
         plt.savefig(outp)
         return
 
-    df = df.groupby('Week', as_index=False)['Deals'].sum()
-
-    fig = plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(12,6))
     ax  = fig.add_subplot(111)
-    ax.plot(df['Week'], df['Deals'], marker='o', linestyle='-')
-    ax.set_ylabel('Deals')
-    ax.set_title('Deletions on Murex per Day')
-
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-    fig.autofmt_xdate()
-
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print('Usage: python generate_deletions_on_murex_chart.py <csv> <png>', file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-# File: generate_otc_intraday_rec_breaks_per_week_chart.py
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig = plt.figure(figsize=(8, 4))
-        ax  = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-
-    df = df.groupby('Week', as_index=False)['RecBreaks'].sum()
-    df['EMA'] = df['RecBreaks'].ewm(span=26, adjust=False).mean()
-
-    fig = plt.figure(figsize=(12, 6))
-    ax  = fig.add_subplot(111)
-    ax.plot(df['Week'], df['RecBreaks'], marker='o', label='Actual')
-    ax.plot(df['Week'], df['EMA'],        color='red', linewidth=2, label='6M EMA')
+    ax.bar(df['Week'], df['RecBreaks'])
     ax.set_ylabel('Rec Breaks')
     ax.set_title('OTC Intraday Rec Breaks per Week')
-    ax.legend()
 
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b'))
-    fig.autofmt_xdate()
-
+    plt.xticks(rotation=45,ha='right')
     plt.tight_layout()
     plt.savefig(outp)
 
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print('Usage: python generate_otc_intraday_rec_breaks_per_week_chart.py <csv> <png>', file=sys.stderr)
+if __name__=='__main__':
+    if len(sys.argv)!=3:
+        print("Usage: python generate_otc_intraday_rec_breaks_per_week_chart.py <in.csv> <out.png>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
-```
 
-# File: generate_otc_trades_saved_per_minute_chart.py
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    df['Minute'] = pd.to_datetime(df['Minute'], format='%d-%b-%Y %H:%M')
-    if df.empty:
-        fig = plt.figure(figsize=(8, 4))
-        ax  = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
 
-    fig = plt.figure(figsize=(12, 6))
-    ax  = fig.add_subplot(111)
-    ax.scatter(df['Minute'], df['TradesSaved'], alpha=0.6, s=20)
-    ax.set_ylabel('Trades Saved')
-    ax.set_title('OTC Trades Saved per Minute')
 
-    ax.xaxis.set_major_locator(mdates.HourLocator(interval=6))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%b %H:%M'))
-    fig.autofmt_xdate()
 
-    plt.tight_layout()
-    plt.savefig(outp)
 
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print('Usage: python generate_otc_trades_saved_per_minute_chart.py <csv> <png>', file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
 
-# File: generate_otc_rec_breaks_by_reason_chart.py
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Month'])
-    if df.empty:
-        fig = plt.figure(figsize=(8, 4))
-        ax  = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
 
-    df = df.groupby(['Month', 'BreakReason'], as_index=False)['Breaks'].sum()
-    pivot = df.pivot(index='Month', columns='BreakReason', values='Breaks').fillna(0)
 
-    fig = plt.figure(figsize=(12, 6))
-    ax  = fig.add_subplot(111)
-    pivot.plot(ax=ax)
-    ax.set_ylabel('Breaks')
-    ax.set_title('OTC Intraday Rec Breaks by Reason')
-    ax.legend(title='Break Reason')
 
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b'))
-    fig.autofmt_xdate()
 
-    plt.tight_layout()
-    plt.savefig(outp)
 
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print('Usage: python generate_otc_rec_breaks_by_reason_chart.py <csv> <png>', file=sys.stderr)
-        sys.exit(1)
-    main(sys.ARGV[1], sys.ARGV[2])
-```
-
-# File: generate_mw_rec_breaks_per_thousand_chart.py
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig = plt.figure(figsize=(8, 4))
-        ax  = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-
-    fig = plt.figure(figsize=(12, 6))
-    ax  = fig.add_subplot(111)
-    ax.plot(df['Week'], df['RecBreaksPerThousandDeals'], marker='o')
-    ax.set_ylabel('Rec Breaks per 1000 Deals')
-    ax.set_title('MW Rec Breaks per 1000 Deals')
-
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b'))
-    fig.autofmt_xdate()
-
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print('Usage: python generate_mw_rec_breaks_per_thousand_chart.py <csv> <png>', file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
