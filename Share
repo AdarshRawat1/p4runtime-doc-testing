@@ -58,12 +58,9 @@ public async Task<string> GenerateMwRecBreaksPerThousandChartAsync(IEnumerable<M
 
 
 # PythonScripts/generate_otc_rec_breaks_by_reason_chart.py
+
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-OTC intra-day rec breaks per week by break reason (last 12 months)
-SQL: [your full query here]
-"""
+
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -71,27 +68,33 @@ import matplotlib.pyplot as plt
 def main(inp, outp):
     df = pd.read_csv(inp, parse_dates=['Month'])
     if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
+        fig = plt.figure(figsize=(8,4))
+        ax  = fig.add_subplot(111)
+        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
 
-    # aggregate duplicates, pivot to multi-line
-    df = df.groupby(['Month','BreakReason'], as_index=False)['Breaks'].sum()
+    # aggregate and pivot
+    df = df.groupby(['Month', 'BreakReason'], as_index=False)['Breaks'].sum()
     pivot = df.pivot(index='Month', columns='BreakReason', values='Breaks').fillna(0)
 
-    fig = plt.figure(figsize=(12,6)); ax = fig.add_subplot(111)
+    fig = plt.figure(figsize=(12,6))
+    ax  = fig.add_subplot(111)
     pivot.plot(ax=ax)
     ax.set_ylabel('Breaks')
     ax.set_title('OTC Rec Breaks per Reason')
-    plt.xticks(rotation=45,ha='right')
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(outp)
 
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_otc_rec_breaks_by_reason_chart.py <in.csv> <out.png>", file=sys.stderr)
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        sys.stderr.write('Usage: python generate_otc_rec_breaks_by_reason_chart.py <in.csv> <out.png>\\n')
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
+
+
 
 
 
@@ -99,12 +102,11 @@ if __name__=='__main__':
 
 
 # PythonScripts/generate_mw_rec_breaks_per_thousand_chart.py
+
+
+
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-MW rec breaks per 1000 deals per week (last 4 years)
-SQL: [your full query here]
-"""
+
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -112,22 +114,25 @@ import matplotlib.pyplot as plt
 def main(inp, outp):
     df = pd.read_csv(inp, parse_dates=['Week'])
     if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
+        fig = plt.figure(figsize=(8,4))
+        ax  = fig.add_subplot(111)
+        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
 
-    fig = plt.figure(figsize=(12,6)); ax = fig.add_subplot(111)
+    fig = plt.figure(figsize=(12,6))
+    ax  = fig.add_subplot(111)
     ax.plot(df['Week'], df['RecBreaksPerThousandDeals'], marker='o')
     ax.set_ylabel('Rec Breaks per 1000 Deals')
     ax.set_title('MW Rec Breaks per 1000 Deals')
-    plt.xticks(rotation=45,ha='right')
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(outp)
 
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_mw_rec_breaks_per_thousand_chart.py <in.csv> <out.png>", file=sys.stderr)
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        sys.stderr.write('Usage: python generate_mw_rec_breaks_per_thousand_chart.py <in.csv> <out.png>\\n')
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
-
 
