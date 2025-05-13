@@ -1,686 +1,256 @@
-// ChartGeneratorService.cs
+# OTC Chart Generator & Python Script Fixes
 
-public async Task<string> GenerateOtcRecBreaksByReasonChartAsync(IEnumerable<OtcRecBreaksByReasonCount> data)
+Below are the **C# ChartGeneratorService** methods and **Python scripts** updated for your three OTC charts:
+
+---
+
+## 1. C#: ChartGeneratorService Methods
+
+Add or replace these in your `ChartGeneratorService` class:
+
+```csharp
+public async Task<string> GenerateOtcIntradayRecBreaksPerWeekChartAsync(
+    IEnumerable<OtcIntradayRecBreaksPerWeekCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir, $"otc_intraday_rec_breaks_per_week_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"otc_intraday_rec_breaks_per_week_{ts}.png");
+
+    // 1) Write CSV
+    await File.WriteAllTextAsync(csvPath,
+        "Week,RecBreaks" + Environment.NewLine +
+        string.Join(Environment.NewLine,
+            data.Select(d => $"{d.Week:yyyy-MM-dd},{d.RecBreaks}"))
+    );
+
+    // 2) Invoke Python script
+    var script = Path.Combine(_scriptDir,
+        "generate_otc_intraday_rec_breaks_per_week_chart.py");
+    var psi = new ProcessStartInfo("python",
+            $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+
+    using var proc = Process.Start(psi)
+                     ?? throw new InvalidOperationException("Cannot start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+
+public async Task<string> GenerateOtcTradesSavedPerMinuteChartAsync(
+    IEnumerable<OtcTradesSavedPerMinuteCount> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir, $"otc_trades_saved_per_minute_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"otc_trades_saved_per_minute_{ts}.png");
+
+    // 1) Write CSV
+    await File.WriteAllTextAsync(csvPath,
+        "Minute,TradesSaved" + Environment.NewLine +
+        string.Join(Environment.NewLine,
+            data.Select(d => $"{d.Minute},{d.TradesSaved}"))
+    );
+
+    // 2) Invoke Python script
+    var script = Path.Combine(_scriptDir,
+        "generate_otc_trades_saved_per_minute_chart.py");
+    var psi = new ProcessStartInfo("python",
+            $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute       = false
+    };
+
+    using var proc = Process.Start(psi)
+                     ?? throw new InvalidOperationException("Cannot start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+
+public async Task<string> GenerateOtcRecBreaksByReasonChartAsync(
+    IEnumerable<OtcRecBreaksByReasonCount> data)
 {
     var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
     var csvPath = Path.Combine(_csvDir, $"otc_rec_breaks_by_reason_{ts}.csv");
     var pngPath = Path.Combine(_chartDir, $"otc_rec_breaks_by_reason_{ts}.png");
 
     await File.WriteAllTextAsync(csvPath,
-        "Month,BreakReason,Breaks\n" +
-        string.Join("\n", data.Select(d => $"{d.Month:yyyy-MM-dd},{d.BreakReason},{d.Breaks}"))
+        "Month,BreakReason,Breaks" + Environment.NewLine +
+        string.Join(Environment.NewLine,
+            data.Select(d => $"{d.Month:yyyy-MM-dd},{d.BreakReason},{d.Breaks}"))
     );
 
-    var script = Path.Combine(_scriptDir, "generate_otc_rec_breaks_by_reason_chart.py");
-    var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    var script = Path.Combine(_scriptDir,
+        "generate_otc_rec_breaks_by_reason_chart.py");
+    var psi = new ProcessStartInfo("python",
+            $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
     {
         RedirectStandardError = true,
         UseShellExecute       = false
     };
-    using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start Python");
+
+    using var proc = Process.Start(psi)
+                     ?? throw new InvalidOperationException("Cannot start Python");
     var err = await proc.StandardError.ReadToEndAsync();
     await proc.WaitForExitAsync();
     if (!string.IsNullOrEmpty(err)) _log.LogError(err);
 
     return $"/charts/{Path.GetFileName(pngPath)}";
 }
+```
 
-public async Task<string> GenerateMwRecBreaksPerThousandChartAsync(IEnumerable<MwRecBreaksPerThousandCount> data)
-{
-    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir, $"mw_rec_breaks_per_1000_deals_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"mw_rec_breaks_per_1000_deals_{ts}.png");
+---
 
-    await File.WriteAllTextAsync(csvPath,
-        "Week,RecBreaksPerThousandDeals\n" +
-        string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.RecBreaksPerThousandDeals:F2}"))
-    );
+## 2. Python: Script Fixes
 
-    var script = Path.Combine(_scriptDir, "generate_mw_rec_breaks_per_thousand_chart.py");
-    var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-    {
-        RedirectStandardError = true,
-        UseShellExecute       = false
-    };
-    using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start Python");
-    var err = await proc.StandardError.ReadToEndAsync();
-    await proc.WaitForExitAsync();
-    if (!string.IsNullOrEmpty(err)) _log.LogError(err);
+### 2.1 `generate_otc_intraday_rec_breaks_per_week_chart.py`
 
-    return $"/charts/{Path.GetFileName(pngPath)}";
-}
-
-
-
-
-
-
-
-
-# PythonScripts/generate_otc_rec_breaks_by_reason_chart.py
-
+```python
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+# Usage: python script.py <in.csv> <out.png>
+
+def main(inp, outp):
+    df = pd.read_csv(inp, parse_dates=['Week'])
+    if df.empty:
+        fig = plt.figure(figsize=(8, 4))
+        ax  = fig.add_subplot(111)
+        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+
+    df = df.groupby('Week', as_index=False)['RecBreaks'].sum()
+    df['EMA'] = df['RecBreaks'].ewm(span=26, adjust=False).mean()
+
+    fig = plt.figure(figsize=(12, 6))
+    ax  = fig.add_subplot(111)
+    ax.plot(df['Week'], df['RecBreaks'], label='Actual', marker='o')
+    ax.plot(df['Week'], df['EMA'],        label='6M EMA', linestyle='-', marker='.', color='red')
+    ax.set_ylabel('Rec Breaks')
+    ax.set_title('OTC Intraday Rec Breaks per Week')
+    ax.legend()
+
+    ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b-%d'))
+    fig.autofmt_xdate()
+
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print('Usage: python generate_otc_intraday_rec_breaks_per_week_chart.py <in.csv> <out.png>', file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+### 2.2 `generate_otc_trades_saved_per_minute_chart.py`
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+# Usage: python script.py <in.csv> <out.png>
+
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    # parse minute timestamps
+    df['Minute'] = pd.to_datetime(df['Minute'], format='%d-%b-%Y %H:%M')
+    if df.empty:
+        fig = plt.figure(figsize=(8, 4))
+        ax  = fig.add_subplot(111)
+        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+
+    fig = plt.figure(figsize=(12, 6))
+    ax  = fig.add_subplot(111)
+    ax.scatter(df['Minute'], df['TradesSaved'], s=25, alpha=0.7)
+    ax.set_ylabel('Trades Saved')
+    ax.set_title('OTC Trades Saved per Minute (Last 5 days)')
+
+    # show day labels as Month abbreviations
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+    fig.autofmt_xdate()
+
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print('Usage: python generate_otc_trades_saved_per_minute_chart.py <in.csv> <out.png>', file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+### 2.3 `generate_otc_rec_breaks_by_reason_chart.py`
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+# Usage: python script.py <in.csv> <out.png>
 
 def main(inp, outp):
     df = pd.read_csv(inp, parse_dates=['Month'])
     if df.empty:
-        fig = plt.figure(figsize=(8,4))
+        fig = plt.figure(figsize=(8, 4))
         ax  = fig.add_subplot(111)
         ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
         ax.axis('off')
         plt.savefig(outp)
         return
 
-    # aggregate and pivot
-    df = df.groupby(['Month', 'BreakReason'], as_index=False)['Breaks'].sum()
+    df = df.groupby(['Month','BreakReason'], as_index=False)['Breaks'].sum()
     pivot = df.pivot(index='Month', columns='BreakReason', values='Breaks').fillna(0)
 
-    fig = plt.figure(figsize=(12,6))
+    fig = plt.figure(figsize=(12, 6))
     ax  = fig.add_subplot(111)
-    pivot.plot(ax=ax)
+    # plot each reason as a separate line
+    for reason in pivot.columns:
+        ax.plot(pivot.index, pivot[reason], marker='o', label=reason)
+
     ax.set_ylabel('Breaks')
-    ax.set_title('OTC Rec Breaks per Reason')
-    plt.xticks(rotation=45, ha='right')
+    ax.set_title('OTC Rec Breaks per Week by Reason')
+    ax.legend(title='Reason')
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b'))
+    fig.autofmt_xdate()
+
     plt.tight_layout()
     plt.savefig(outp)
 
 if __name__ == '__main__':
     if len(sys.argv) != 3:
-        sys.stderr.write('Usage: python generate_otc_rec_breaks_by_reason_chart.py <in.csv> <out.png>\\n')
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-
-
-
-
-
-
-
-
-# PythonScripts/generate_mw_rec_breaks_per_thousand_chart.py
-
-
-
-#!/usr/bin/env python3
-
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig = plt.figure(figsize=(8,4))
-        ax  = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-
-    fig = plt.figure(figsize=(12,6))
-    ax  = fig.add_subplot(111)
-    ax.plot(df['Week'], df['RecBreaksPerThousandDeals'], marker='o')
-    ax.set_ylabel('Rec Breaks per 1000 Deals')
-    ax.set_title('MW Rec Breaks per 1000 Deals')
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        sys.stderr.write('Usage: python generate_mw_rec_breaks_per_thousand_chart.py <in.csv> <out.png>\\n')
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-
-
-
-
-
-
-
-
-
-
-**C# – IChartGeneratorService.cs**
-
-```csharp
-public interface IChartGeneratorService
-{
-    Task<string> GenerateDeletionsOnMurexChartAsync(IEnumerable<DeletionsOnMurexCount> data);
-    Task<string> GenerateOtcTop5RecBreaks3dChartAsync(IEnumerable<OtcTop5RecBreaksCount> data);
-    Task<string> GenerateMtmContractsBookedPerWeekChartAsync(IEnumerable<MtmContractsBookedCount> data);
-    Task<string> GenerateOtcContractsBookedVsAvgChartAsync(IEnumerable<OtcContractsBookedVsAvgCount> data);
-    Task<string> GenerateActiveUsersByRoleChartAsync(IEnumerable<ActiveUsersByRoleCount> data);
-    Task<string> GenerateActiveUsersByLocationChartAsync(IEnumerable<ActiveUsersByLocationCount> data);
-    Task<string> GenerateSlowestDealEnquirySearchesChartAsync(IEnumerable<SlowestDealEnquirySearchCount> data);
-    Task<string> GenerateSlowestUserOperationsChartAsync(IEnumerable<SlowestUserOperationCount> data);
-    Task<string> GenerateToolsUsedLastMonthChartAsync(IEnumerable<ToolsUsageCount> data);
-    Task<string> GenerateMarketsSetLastMonthChartAsync(IEnumerable<MarketsUsageCount> data);
-    Task<string> GenerateBlottersFlexVsClassic3dChartAsync(IEnumerable<BlottersFlexClassicCount> data);
-}
-```
-
----
-
-**C# – ChartGeneratorService.cs**
-
-```csharp
-public class ChartGeneratorService : IChartGeneratorService
-{
-    private readonly string _csvDir;
-    private readonly string _chartDir;
-    private readonly string _scriptDir;
-    private readonly ILogger<ChartGeneratorService> _log;
-
-    public ChartGeneratorService(IConfiguration config, ILogger<ChartGeneratorService> log)
-    {
-        _csvDir    = config["Paths:CsvDir"];
-        _chartDir  = config["Paths:ChartDir"];
-        _scriptDir = config["Paths:PythonScripts"];
-        _log       = log;
-    }
-
-    private async Task<string> RunScriptAsync(string scriptName, string header, IEnumerable<string> lines)
-    {
-        var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-        var csvPath = Path.Combine(_csvDir, $"{scriptName}_{ts}.csv");
-        var pngPath = Path.Combine(_chartDir, $"{scriptName}_{ts}.png");
-
-        await File.WriteAllTextAsync(csvPath, header + "\n" + string.Join("\n", lines));
-
-        var script = Path.Combine(_scriptDir, scriptName + ".py");
-        var psi = new ProcessStartInfo("python",
-            $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-        {
-            RedirectStandardError = true,
-            UseShellExecute        = false
-        };
-
-        using var proc = Process.Start(psi) ??
-            throw new InvalidOperationException($"Cannot start {{script}}");
-        var err = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
-        if (!string.IsNullOrEmpty(err)) _log.LogError(err);
-        return $"/charts/{Path.GetFileName(pngPath)}";
-    }
-
-    public Task<string> GenerateDeletionsOnMurexChartAsync(IEnumerable<DeletionsOnMurexCount> data)
-    {
-        var header = "Week,Deals";
-        var lines  = data.Select(d => $"{d.Week:yyyy-MM-dd},{d.Deals}");
-        return RunScriptAsync("generate_deletions_on_murex_chart", header, lines);
-    }
-
-    public Task<string> GenerateOtcTop5RecBreaks3dChartAsync(IEnumerable<OtcTop5RecBreaksCount> data)
-    {
-        var header = "Product,RecBreaks,BreakReason";
-        var lines  = data.Select(d => $"{d.Product},{d.RecBreaks},{d.BreakReason}");
-        return RunScriptAsync("generate_otc_top5_rec_breaks_3d_chart", header, lines);
-    }
-
-    public Task<string> GenerateMtmContractsBookedPerWeekChartAsync(IEnumerable<MtmContractsBookedCount> data)
-    {
-        var header = "Week,ContractsBooked";
-        var lines  = data.Select(d => $"{d.Week:yyyy-MM-dd},{d.ContractsBooked}");
-        return RunScriptAsync("generate_mtm_contracts_booked_per_week_chart", header, lines);
-    }
-
-    public Task<string> GenerateOtcContractsBookedVsAvgChartAsync(IEnumerable<OtcContractsBookedVsAvgCount> data)
-    {
-        var header = "Week,DealsBooked,AvgDeals";
-        var lines  = data.Select(d => $"{d.Week:yyyy-MM-dd},{d.DealsBooked},{d.AvgDeals}");
-        return RunScriptAsync("generate_otc_contracts_booked_vs_avg_chart", header, lines);
-    }
-
-    public Task<string> GenerateActiveUsersByRoleChartAsync(IEnumerable<ActiveUsersByRoleCount> data)
-    {
-        var header = "UserRole,UserCount";
-        var lines  = data.Select(d => $"{d.UserRole},{d.UserCount}");
-        return RunScriptAsync("generate_active_users_by_role_chart", header, lines);
-    }
-
-    public Task<string> GenerateActiveUsersByLocationChartAsync(IEnumerable<ActiveUsersByLocationCount> data)
-    {
-        var header = "Location,UserCount";
-        var lines  = data.Select(d => $"{d.Location},{d.UserCount}");
-        return RunScriptAsync("generate_active_users_by_location_chart", header, lines);
-    }
-
-    public Task<string> GenerateSlowestDealEnquirySearchesChartAsync(IEnumerable<SlowestDealEnquirySearchCount> data)
-    {
-        var header = "Search,AverageTimeSeconds";
-        var lines  = data.Select(d => $"{d.Search},{d.AverageTimeSeconds}");
-        return RunScriptAsync("generate_slowest_deal_enquiry_searches_chart", header, lines);
-    }
-
-    public Task<string> GenerateSlowestUserOperationsChartAsync(IEnumerable<SlowestUserOperationCount> data)
-    {
-        var header = "OperationType,AverageTimeSeconds";
-        var lines  = data.Select(d => $"{d.OperationType},{d.AverageTimeSeconds}");
-        return RunScriptAsync("generate_slowest_user_operations_chart", header, lines);
-    }
-
-    public Task<string> GenerateToolsUsedLastMonthChartAsync(IEnumerable<ToolsUsageCount> data)
-    {
-        var header = "Report,TimesUsed";
-        var lines  = data.Select(d => $"{d.Report},{d.TimesUsed}");
-        return RunScriptAsync("generate_tools_used_last_month_chart", header, lines);
-    }
-
-    public Task<string> GenerateMarketsSetLastMonthChartAsync(IEnumerable<MarketsUsageCount> data)
-    {
-        var header = "Report,TimesUsed";
-        var lines  = data.Select(d => $"{d.Report},{d.TimesUsed}");
-        return RunScriptAsync("generate_markets_set_last_month_chart", header, lines);
-    }
-
-    public Task<string> GenerateBlottersFlexVsClassic3dChartAsync(IEnumerable<BlottersFlexClassicCount> data)
-    {
-        var header = "Users,Count,Flex";
-        var lines  = data.Select(d => $"{d.Users},{d.Count},{d.Flex}");
-        return RunScriptAsync("generate_blotters_flex_vs_classic_3d_chart", header, lines);
-    }
-}
-```
-
----
-
-## Python scripts (UTF-8, file-only)
-
-\*\*Each script lives under \*\***`PythonScripts/`** and is saved as UTF-8 without BOM.
-
-### `generate_deletions_on_murex_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Deletions on contracts passed to Murex per week
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    fig = plt.figure(figsize=(10,6)); ax = fig.add_subplot(111)
-    ax.plot(df['Week'], df['Deals'], marker='o')
-    ax.set_ylabel('Deals'); ax.set_title('Deletions on Murex per Week')
-    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_deletions_on_murex_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### `generate_otc_top5_rec_breaks_3d_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-OTC top 5 products causing intra-day rec breaks (3D bar)
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig = plt.figure(figsize=(8,6)); ax = fig.add_subplot(111, projection='3d')
-        ax.text(0.5,0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.set_axis_off(); plt.savefig(outp); return
-
-    x_labels = df['Product'].unique()
-    y_labels = df['BreakReason'].unique()
-
-    fig = plt.figure(figsize=(12,8))
-    ax  = fig.add_subplot(111, projection='3d')
-
-    xpos = range(len(x_labels))
-    ypos = range(len(y_labels))
-    xposM, yposM = np.meshgrid(xpos, ypos, indexing='ij')
-    xposM = xposM.ravel(); yposM = yposM.ravel()
-
-    zpos = np.zeros_like(xposM)
-    dx = dy = 0.5
-    dz = []
-    for x, y in zip(xposM, yposM):
-        prod = x_labels[x]; reason = y_labels[y]
-        val = df.loc[(df['Product']==prod)&(df['BreakReason']==reason),'RecBreaks'].sum()
-        dz.append(val)
-
-    ax.bar3d(xposM, yposM, zpos, dx, dy, dz)
-    ax.set_xticks(xpos); ax.set_xticklabels(x_labels, rotation=45, ha='right')
-    ax.set_yticks(ypos); ax.set_yticklabels(y_labels)
-    ax.set_zlabel('Rec Breaks'); ax.set_title('OTC Top 5 Rec Breaks (3D)')
-
-    plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_otc_top5_rec_breaks_3d_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-\*(Remaining scripts follow the same pattern; here are all remaining Python chart scripts fully implemented.
-
-### `generate_mtm_contracts_booked_per_week_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-MTM contracts booked per week in last 4 years excluding synthetics
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    fig = plt.figure(figsize=(10,6)); ax = fig.add_subplot(111)
-    ax.plot(df['Week'], df['ContractsBooked'], marker='o')
-    ax.set_ylabel('Contracts Booked'); ax.set_title('MTM Contracts Booked per Week')
-    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_mtm_contracts_booked_per_week_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### `generate_otc_contracts_booked_vs_avg_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-OTC contracts booked per week vs average (last 4 years)
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    fig = plt.figure(figsize=(10,6)); ax = fig.add_subplot(111)
-    ax.plot(df['Week'], df['DealsBooked'], marker='o', label='Booked')
-    ax.plot(df['Week'], df['AvgDeals'],   marker='x', linestyle='--', label='Average')
-    ax.set_ylabel('Deals'); ax.set_title('OTC Contracts Booked vs Average per Week')
-    ax.legend(); plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_otc_contracts_booked_vs_avg_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### `generate_active_users_by_role_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Active users by role last month
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    fig = plt.figure(figsize=(10,6)); ax = fig.add_subplot(111)
-    ax.bar(df['UserRole'], df['UserCount'])
-    ax.set_ylabel('Number of Users'); ax.set_title('Active Users by Role')
-    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_active_users_by_role_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### `generate_active_users_by_location_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Active users per location last month
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    fig = plt.figure(figsize=(10,6)); ax = fig.add_subplot(111)
-    ax.bar(df['Location'], df['UserCount'])
-    ax.set_ylabel('Users'); ax.set_title('Active Users by Location')
-    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_active_users_by_location_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### `generate_slowest_deal_enquiry_searches_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Slowest deal enquiry searches in last 7 days (top 25)
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    fig = plt.figure(figsize=(12,6)); ax = fig.add_subplot(111)
-    ax.barh(df['Search'], df['AverageTimeSeconds'])
-    ax.set_xlabel('Average time (s)'); ax.set_title('Slowest Deal Enquiry Searches')
-    plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_slowest_deal_enquiry_searches_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### `generate_slowest_user_operations_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Slowest user operations in last 7 days
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    fig = plt.figure(figsize=(12,6)); ax = fig.add_subplot(111)
-    ax.barh(df['OperationType'], df['AverageTimeSeconds'])
-    ax.set_xlabel('Average time (s)'); ax.set_title('Slowest User Operations')
-    plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_slowest_user_operations_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### `generate_tools_used_last_month_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Tools used last month
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    fig = plt.figure(figsize=(10,6)); ax = fig.add_subplot(111)
-    ax.bar(df['Report'], df['TimesUsed'])
-    ax.set_ylabel('Times used'); ax.set_title('Tools Used Last Month')
-    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_tools_used_last_month_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### `generate_markets_set_last_month_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Markets set last month
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig = plt.figure(figsize=(8,4)); ax = fig.add_subplot(111)
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    fig = plt.figure(figsize=(10,6)); ax = fig.add_subplot(111)
-    ax.bar(df['Report'], df['TimesUsed'])
-    ax.set_ylabel('Times used'); ax.set_title('Markets Set Last Month')
-    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_markets_set_last_month_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### `generate_blotters_flex_vs_classic_3d_chart.py`
-
-```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Blotters Flex vs Classic last month (3D bar)
-SQL: ...[your query]...
-"""
-import sys
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
-    if df.empty:
-        fig = plt.figure(figsize=(8,6)); ax = fig.add_subplot(111, projection='3d')
-        ax.text(0.5,0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.set_axis_off(); plt.savefig(outp); return
-
-    users = df['Users'].unique()
-    flex  = df['Flex'].unique()
-
-    xpos, ypos = np.meshgrid(range(len(users)), range(len(flex)), indexing='ij')
-    xpos = xpos.ravel(); ypos = ypos.ravel()
-    zpos = np.zeros_like(xpos)
-    dx = dy = 0.5
-    dz = [ df.loc[(df['Users']==u)&(df['Flex']==f),'Count'].sum() for u,f in zip(xpos, ypos) ]
-
-    fig = plt.figure(figsize=(12,8))
-    ax  = fig.add_subplot(111, projection='3d')
-    ax.bar3d(xpos, ypos, zpos, dx, dy, dz)
-    ax.set_xticks(range(len(users))); ax.set_xticklabels(users, rotation=45, ha='right')
-    ax.set_yticks(range(len(flex)));  ax.set_yticklabels(flex)
-    ax.set_zlabel('Count'); ax.set_title('Blotters Flex vs Classic (3D)')
-
-    plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_blotters_flex_vs_classic_3d_chart.py <in.csv> <out.png>", file=sys.stderr)
+        print('Usage: python generate_otc_rec_breaks_by_reason_chart.py <in.csv> <out.png>', file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
 ```
