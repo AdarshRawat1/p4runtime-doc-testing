@@ -1,3 +1,13 @@
+import sys, matplotlib, matplotlib.pyplot as plt
+
+print("PYTHON EXE:", sys.executable, file=sys.stderr)
+print("MATPLOTLIB FILE:", getattr(matplotlib, '_file_', '—no file—'), file=sys.stderr)
+print("MATPLOTLIB VERSION:", matplotlib._version_, file=sys.stderr)
+print("HAS figure?:", hasattr(plt, 'figure'), file=sys.stderr)
+print("HAS subplots?:", hasattr(plt, 'subplots'), file=sys.stderr)s
+
+
+
 import sys, matplotlib
 print(f"EXECUTABLE = {sys.executable}", file=sys.stderr)
 print(f"MATPLOTLIB = {matplotlib.__file__} @ {matplotlib.__version__}", file=sys.stderr)
