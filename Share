@@ -1,3 +1,182 @@
+// Services/OracleDataService.cs
+using Oracle.ManagedDataAccess.Client;
+using StarTrends.Models;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+public class OracleDataService : IOracleDataService
+{
+    private readonly OracleConnection _conn;
+
+    public OracleDataService(OracleConnection conn)
+    {
+        _conn = conn;
+    }
+
+    public async Task<IEnumerable<RecBreaksCount>> GetRecBreaksCountAsync(DateTime fromDate, DateTime toDate)
+    {
+        const string sql = @"
+WITH recbreaks AS (
+  SELECT c.prd_typ_name,
+         COUNT(1) AS ""Rec Breaks"",
+         r.reason
+    FROM (
+      SELECT a.con_no,
+             a.lst_mod_dt,
+             a.rec_src,
+             a.rec_sts,
+             CASE
+               WHEN a.rec_brk_reason = 'TST' THEN 'Tech Problem - STP'
+               WHEN a.rec_brk_reason = 'RTE' THEN 'Tech Problem - Rec'
+               WHEN a.rec_brk_reason = 'MOE' THEN 'Manual Error - MO'
+               WHEN a.rec_brk_reason = 'FOE' THEN 'DC Error - FO'
+               WHEN a.rec_brk_reason = 'FID' THEN 'Fixings Discrepancy'
+               WHEN a.rec_brk_reason = 'CDS' THEN 'Calendar Data STAR'
+               WHEN a.rec_brk_reason = 'CDM' THEN 'Calendar Data Import'
+               ELSE a.rec_brk_reason
+             END AS reason
+        FROM star_rec_hist a
+       WHERE a.lst_mod_dt BETWEEN :fromDate AND :toDate
+         AND a.rec_src = 'INT'
+         AND a.rec_sts = 'DIF'
+    ) r
+    JOIN (
+      SELECT con_no,
+             CASE
+               WHEN prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
+               WHEN prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
+               WHEN prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
+               WHEN prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
+               WHEN prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
+               WHEN prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
+               WHEN prd_typ_cod = 'FRA' THEN 'FRA'
+               WHEN prd_typ_cod = 'CAP' THEN 'Cap'
+               WHEN prd_typ_cod = 'FLR' THEN 'Floor'
+               WHEN prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
+               WHEN prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
+               WHEN prd_typ_cod = 'OSP' THEN 'Swaption Pay'
+               WHEN prd_typ_cod = 'OSR' THEN 'Swaption Rec'
+               WHEN prd_typ_cod = 'OSS' THEN 'Swaption Strad'
+               WHEN prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
+               WHEN prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
+               WHEN prd_typ_cod = 'CSH' THEN 'Cashflow'
+               WHEN prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
+               WHEN prd_typ_cod = 'BME' THEN 'Container BME'
+               WHEN prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
+               WHEN prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
+               WHEN prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
+               ELSE prd_typ_cod
+             END AS prd_typ_name
+        FROM star_contract PARTITION(product_oth)
+    ) c ON c.con_no = r.con_no
+   WHERE r.reason NOT IN ('UNR','RFB')
+   GROUP BY c.prd_typ_name, r.reason
+),
+recbreaksorderd AS (
+  SELECT prd_typ_name, SUM(""Rec Breaks"") AS total
+    FROM recbreaks
+   GROUP BY prd_typ_name
+   ORDER BY total DESC
+)
+SELECT prd_typ_name AS PrdTypName,
+       ""Rec Breaks""    AS RecBreaks,
+       reason            AS Reason
+  FROM recbreaks
+ WHERE prd_typ_name IN (
+   SELECT prd_typ_name FROM recbreaksorderd WHERE rownum <= 5
+ )";
+
+        using var cmd = _conn.CreateCommand();
+        cmd.BindByName = true;
+        cmd.CommandText = sql;
+        cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+        cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        var list = new List<RecBreaksCount>();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new RecBreaksCount {
+                PrdTypName = reader.GetString(0),
+                RecBreaks  = reader.GetInt32(1),
+                Reason     = reader.GetString(2)
+            });
+        }
+        return list;
+    }
+
+    public async Task<IEnumerable<MtmContractsBookedCount>> GetMtmContractsBookedAsync(DateTime fromDate, DateTime toDate)
+    {
+        const string sql = @"
+SELECT TRUNC(inp_dt,'IW') AS Week,
+       COUNT(1)         AS MtmContractsBooked
+  FROM star_contract PARTITION(product_oth)
+ WHERE TRUNC(inp_dt) BETWEEN :fromDate AND :toDate
+   AND con_no IN (
+     SELECT con_no FROM star_mtm WHERE lgcl_del_flg='N'
+   )
+   AND mrr_typ_cod IN (0,1,6)
+ GROUP BY TRUNC(inp_dt,'IW')
+ ORDER BY Week";
+
+        using var cmd = _conn.CreateCommand();
+        cmd.BindByName = true;
+        cmd.CommandText = sql;
+        cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+        cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        var list = new List<MtmContractsBookedCount>();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new MtmContractsBookedCount {
+                Week                  = reader.GetDateTime(0),
+                MtmContractsBooked    = reader.GetInt32(1)
+            });
+        }
+        return list;
+    }
+
+    public async Task<IEnumerable<OtcContractsBookedCount>> GetOtcContractsBookedAsync(DateTime fromDate, DateTime toDate)
+    {
+        const string sql = @"
+SELECT
+  TRUNC(c.inp_dt,'IW')                                 AS Week,
+  SUM(CASE WHEN m.con_no IS NOT NULL THEN 1 ELSE 0 END) AS MtmContractsBooked,
+  COUNT(1)                                             AS DealsBooked
+FROM star_contract PARTITION(product_oth) c
+LEFT JOIN star_mtm m
+  ON m.con_no = c.con_no
+ AND m.lgcl_del_flg='N'
+WHERE c.inp_dt BETWEEN :fromDate AND :toDate
+  AND c.mrr_typ_cod IN (0,1,6)
+GROUP BY TRUNC(c.inp_dt,'IW')
+ORDER BY Week";
+
+        using var cmd = _conn.CreateCommand();
+        cmd.BindByName = true;
+        cmd.CommandText = sql;
+        cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+        cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        var list = new List<OtcContractsBookedCount>();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new OtcContractsBookedCount {
+                Week                = reader.GetDateTime(0),
+                MtmContractsBooked  = reader.GetInt32(1),
+                DealsBooked         = reader.GetInt32(2)
+            });
+        }
+        return list;
+    }
+}
+
+
+
+
+
 Below is the full 8-step “chart integration recipe” applied to each of your three requested charts. Just copy & paste each block into your StarTrends solution, edit your date-bindings as needed, and you’ll have:
 
 ---
