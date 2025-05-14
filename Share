@@ -1,525 +1,228 @@
-Below is the **complete** 8-step integration for **all three** charts, following exactly your working patterns (new connection per call, full SQL text, CSV → Python → PNG, metadata updates, `<GraphBox>`).
+Below is a pair of methods and a matching Python script that follow exactly the same style as your existing “per‐thousand” and “product trades” implementations. You can drop these into your same service class (where `_csvDir`, `_chartDir`, `_scriptDir` and `_log` are already defined) and point your Blazor page at the new chart URL.
 
 ---
 
-## 1. OTC Top 5 Products Causing Intra-day Rec Breaks (Last 4 Weeks)
-
-### 1. Model
-
-**File:** `Models/RecBreaksCount.cs`
+### 1. Fetch the top-5 intra-day rec-breaks data
 
 ```csharp
-namespace StarTrends.Models
+public async Task<IEnumerable<RecBreakData>> GetTopIntraDayRecBreaksAsync(
+    DateTime fromDate, DateTime toDate, int topN)
 {
-    public class RecBreaksCount
-    {
-        public string PrdTypName { get; set; }
-        public int RecBreaks { get; set; }
-        public string Reason { get; set; }
-    }
-}
-```
+    var list = new List<RecBreakData>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
 
-### 2. Data-service interface
-
-**File:** `Services/IOracleDataService.cs`
-
-```csharp
-using StarTrends.Models;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-
-public interface IOracleDataService
-{
-    Task<IEnumerable<RecBreaksCount>> GetRecBreaksCountAsync(DateTime fromDate, DateTime toDate);
-    // … other methods …
-}
-```
-
-### 3. Data-service implementation
-
-**File:** `Services/OracleDataService.cs`
-
-```csharp
-using Oracle.ManagedDataAccess.Client;
-using StarTrends.Models;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-
-public class OracleDataService : IOracleDataService
-{
-    private readonly string _connectionString;
-    public OracleDataService(IConfiguration config)
-    {
-        _connectionString = config.GetConnectionString("Oracle");
-    }
-
-    public async Task<IEnumerable<RecBreaksCount>> GetRecBreaksCountAsync(DateTime fromDate, DateTime toDate)
-    {
-        var list = new List<RecBreaksCount>();
-        await using var conn = new OracleConnection(_connectionString);
-        await conn.OpenAsync();
-
-        const string sql = @"
+    const string sql = @"
 WITH recbreaks AS (
-  SELECT c.prd_typ_name,
-         COUNT(1)                  AS ""Rec Breaks"",
-         r.reason
-    FROM (
-      SELECT a.con_no,
-             a.lst_mod_dt,
-             a.rec_src,
-             a.rec_sts,
-             CASE
-               WHEN a.rec_brk_reason = 'TST' THEN 'Tech Problem - STP'
-               WHEN a.rec_brk_reason = 'RTE' THEN 'Tech Problem - Rec'
-               WHEN a.rec_brk_reason = 'MOE' THEN 'Manual Error - MO'
-               WHEN a.rec_brk_reason = 'FOE' THEN 'DC Error - FO'
-               WHEN a.rec_brk_reason = 'FID' THEN 'Fixings Discrepancy'
-               WHEN a.rec_brk_reason = 'CDS' THEN 'Calendar Data STAR'
-               WHEN a.rec_brk_reason = 'CDM' THEN 'Calendar Data Import'
-               ELSE a.rec_brk_reason
-             END AS reason
-        FROM star_rec_hist a
-       WHERE a.lst_mod_dt BETWEEN :fromDate AND :toDate
-         AND a.rec_src = 'INT'
-         AND a.rec_sts = 'DIF'
-    ) r
-    JOIN (
-      SELECT con_no,
-             CASE
-               WHEN prd_typ_cod = 'IR1' THEN 'IR Swap (Fx/Fl)'
-               WHEN prd_typ_cod = 'IR2' THEN 'IR Swap (IMM)'
-               WHEN prd_typ_cod = 'IR3' THEN 'IR Swap (Fl/Fl)'
-               WHEN prd_typ_cod = 'CC1' THEN 'CCY (Fx/Fl)'
-               WHEN prd_typ_cod = 'CC2' THEN 'CCY (Fl/Fl)'
-               WHEN prd_typ_cod = 'CC3' THEN 'CCY (Fx/Fx)'
-               WHEN prd_typ_cod = 'FRA' THEN 'FRA'
-               WHEN prd_typ_cod = 'CAP' THEN 'Cap'
-               WHEN prd_typ_cod = 'FLR' THEN 'Floor'
-               WHEN prd_typ_cod = 'CFS' THEN 'Cap/Floor Straddle'
-               WHEN prd_typ_cod = 'COL' THEN 'Cap/Floor Collar'
-               WHEN prd_typ_cod = 'OSP' THEN 'Swaption Pay'
-               WHEN prd_typ_cod = 'OSR' THEN 'Swaption Rec'
-               WHEN prd_typ_cod = 'OSS' THEN 'Swaption Strad'
-               WHEN prd_typ_cod = 'DFX' THEN 'Deposit (Fixed)'
-               WHEN prd_typ_cod = 'DFL' THEN 'Deposit (Float)'
-               WHEN prd_typ_cod = 'CSH' THEN 'Cashflow'
-               WHEN prd_typ_cod = 'BOC' THEN 'Bond Option Straddle'
-               WHEN prd_typ_cod = 'BME' THEN 'Container BME'
-               WHEN prd_typ_cod = 'IL1' THEN 'Inflation swap (In/Fx)'
-               WHEN prd_typ_cod = 'IL2' THEN 'Inflation swap (In/Fl)'
-               WHEN prd_typ_cod = 'IL3' THEN 'Inflation Fixing Lock (In)'
-               ELSE prd_typ_cod
-             END AS prd_typ_name
-        FROM star_contract PARTITION(product_oth)
-    ) c
-      ON c.con_no = r.con_no
-   WHERE r.reason NOT IN ('UNR','RFB')
-   GROUP BY c.prd_typ_name, r.reason
+  SELECT 
+    c.prd_typ_name    AS Product,
+    COUNT(1)           AS RecBreaks,
+    CASE
+      WHEN r.rec_brk_reason = 'TST' THEN 'Tech Problem - STP'
+      WHEN r.rec_brk_reason = 'RTE' THEN 'Tech Problem - Rec'
+      WHEN r.rec_brk_reason = 'MOE' THEN 'Manual Error - MO'
+      WHEN r.rec_brk_reason = 'FOE' THEN 'DC Error - FO'
+      WHEN r.rec_brk_reason = 'FID' THEN 'Fixings Discrepancy'
+      WHEN r.rec_brk_reason = 'CDS' THEN 'Calendar Data STAR'
+      WHEN r.rec_brk_reason = 'CDM' THEN 'Calendar Data Import'
+      ELSE r.rec_brk_reason
+    END               AS BreakReason
+  FROM star_rec_hist r
+  JOIN star_contract PARTITION(product_oth) c 
+    ON c.con_no = r.con_no
+  WHERE r.lst_mod_dt > :fromDate
+    AND r.lst_mod_dt < :toDate
+    AND r.rec_src = 'INT'
+    AND r.rec_sts = 'DIF'
+    AND r.rec_brk_reason NOT IN ('UNR','RFB')
+  GROUP BY c.prd_typ_name, r.rec_brk_reason
 ),
 recbreaksorderd AS (
-  SELECT prd_typ_name,
-         SUM(""Rec Breaks"") AS total
-    FROM recbreaks
-   GROUP BY prd_typ_name
-   ORDER BY total DESC
-)
-SELECT prd_typ_name AS PrdTypName,
-       ""Rec Breaks""    AS RecBreaks,
-       reason            AS Reason
+  SELECT Product, SUM(RecBreaks) AS Total
   FROM recbreaks
- WHERE prd_typ_name IN (
-   SELECT prd_typ_name FROM recbreaksorderd WHERE rownum <= 5
- )";
+  GROUP BY Product
+  ORDER BY Total DESC
+)
+SELECT *
+FROM recbreaks
+WHERE Product IN (
+  SELECT Product 
+  FROM recbreaksorderd 
+  WHERE ROWNUM <= :topN
+)
+ORDER BY Product, BreakReason";
 
-        await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-        cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
-        cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+    cmd.Parameters.Add("topN",      OracleDbType.Int32).Value = topN;
 
-        await using var rdr = await cmd.ExecuteReaderAsync();
-        while (await rdr.ReadAsync())
-        {
-            list.Add(new RecBreaksCount
-            {
-                PrdTypName = rdr.GetString(rdr.GetOrdinal("PrdTypName")),
-                RecBreaks  = rdr.GetInt32(rdr.GetOrdinal("RecBreaks")),
-                Reason     = rdr.GetString(rdr.GetOrdinal("Reason"))
-            });
-        }
-
-        return list;
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+    {
+        list.Add(new RecBreakData {
+            Product   = rdr.GetString(rdr.GetOrdinal("Product")),
+            Reason    = rdr.GetString(rdr.GetOrdinal("BreakReason")),
+            RecBreaks = rdr.GetInt32(rdr.GetOrdinal("RecBreaks"))
+        });
     }
 
-    // … other methods for the other charts …
+    return list;
 }
 ```
 
-### 4. Chart-generator interface
+> **Model** (`RecBreakData`) should match your existing pattern:
+>
+> ```csharp
+> public class RecBreakData
+> {
+>     public string Product    { get; set; }
+>     public string Reason     { get; set; }
+>     public int    RecBreaks  { get; set; }
+> }
+> ```
 
-**File:** `Services/IChartGeneratorService.cs`
+---
+
+### 2. Write CSV & invoke Python to build the 3-axis chart
 
 ```csharp
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using StarTrends.Models;
-
-public interface IChartGeneratorService
+public async Task<string> GenerateRecBreaks3AxisChartAsync(
+    IEnumerable<RecBreakData> data)
 {
-    Task<string> GenerateRecBreaksChartAsync(IEnumerable<RecBreaksCount> data);
-    Task<string> GenerateMtmContractsBookedChartAsync(IEnumerable<MtmContractsBookedCount> data);
-    Task<string> GenerateOtcContractsBookedChartAsync(IEnumerable<OtcContractsBookedCount> data);
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir,   $"rec_breaks_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"rec_breaks_{ts}.png");
+
+    // write CSV in one go
+    await File.WriteAllTextAsync(csvPath,
+        "Product,BreakReason,RecBreaks\n" +
+        string.Join("\n", data.Select(d =>
+            $"{d.Product},{d.Reason},{d.RecBreaks}"))
+    );
+
+    // call the Python generator
+    var script = Path.Combine(_scriptDir, "generate_rec_breaks_3_axis_chart.py");
+    var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    {
+        RedirectStandardError = true,
+        UseShellExecute        = false
+    };
+
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Could not start Python process");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+
+    if (!string.IsNullOrWhiteSpace(err))
+        _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
 }
 ```
 
-### 5. Chart-generator implementation
+---
 
-**File:** `Services/ChartGeneratorService.cs`
-
-```csharp
-using Microsoft.Extensions.Logging;
-using StarTrends.Models;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
-
-public class ChartGeneratorService : IChartGeneratorService
-{
-    private readonly string _csvDir;
-    private readonly string _chartDir;
-    private readonly string _scriptDir;
-    private readonly ILogger<ChartGeneratorService> _log;
-
-    public ChartGeneratorService(IConfiguration config, ILogger<ChartGeneratorService> log)
-    {
-        _csvDir    = config["Paths:CsvDir"];
-        _chartDir  = config["Paths:ChartDir"];
-        _scriptDir = config["Paths:ScriptDir"];
-        _log       = log;
-    }
-
-    public async Task<string> GenerateRecBreaksChartAsync(IEnumerable<RecBreaksCount> data)
-    {
-        var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-        var csvPath = Path.Combine(_csvDir, $"rec_breaks_{ts}.csv");
-        var pngPath = Path.Combine(_chartDir, $"rec_breaks_{ts}.png");
-
-        await File.WriteAllTextAsync(csvPath,
-            "PrdTypName,Reason,RecBreaks\n" +
-            string.Join("\n", data.Select(d => $"{d.PrdTypName},{d.Reason},{d.RecBreaks}"))
-        );
-
-        var script = Path.Combine(_scriptDir, "generate_rec_breaks_chart.py");
-        var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-        {
-            RedirectStandardError = true,
-            UseShellExecute       = false
-        };
-
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException("Could not start Python process");
-
-        var error = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
-        if (!string.IsNullOrWhiteSpace(error))
-            _log.LogError(error);
-
-        return $"/charts/{Path.GetFileName(pngPath)}";
-    }
-
-    public async Task<string> GenerateMtmContractsBookedChartAsync(IEnumerable<MtmContractsBookedCount> data)
-    {
-        var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-        var csvPath = Path.Combine(_csvDir, $"mtm_contracts_booked_{ts}.csv");
-        var pngPath = Path.Combine(_chartDir, $"mtm_contracts_booked_{ts}.png");
-
-        await File.WriteAllTextAsync(csvPath,
-            "Week,MtmContractsBooked\n" +
-            string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.MtmContractsBooked}"))
-        );
-
-        var script = Path.Combine(_scriptDir, "generate_mtm_contracts_booked_chart.py");
-        var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-        {
-            RedirectStandardError = true,
-            UseShellExecute       = false
-        };
-
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException("Could not start Python process");
-
-        var error = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
-        if (!string.IsNullOrWhiteSpace(error))
-            _log.LogError(error);
-
-        return $"/charts/{Path.GetFileName(pngPath)}";
-    }
-
-    public async Task<string> GenerateOtcContractsBookedChartAsync(IEnumerable<OtcContractsBookedCount> data)
-    {
-        var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-        var csvPath = Path.Combine(_csvDir, $"otc_contracts_booked_{ts}.csv");
-        var pngPath = Path.Combine(_chartDir, $"otc_contracts_booked_{ts}.png");
-
-        await File.WriteAllTextAsync(csvPath,
-            "Week,MtmContractsBooked,DealsBooked\n" +
-            string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.MtmContractsBooked},{d.DealsBooked}"))
-        );
-
-        var script = Path.Combine(_scriptDir, "generate_otc_contracts_booked_chart.py");
-        var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-        {
-            RedirectStandardError = true,
-            UseShellExecute       = false
-        };
-
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException("Could not start Python process");
-
-        var error = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
-        if (!string.IsNullOrWhiteSpace(error))
-            _log.LogError(error);
-
-        return $"/charts/{Path.GetFileName(pngPath)}";
-    }
-}
-```
-
-### 6. Python scripts
-
-**File:** `PythonScripts/generate_rec_breaks_chart.py`
+### 3. `generate_rec_breaks_3_axis_chart.py`
 
 ```python
-#!/usr/bin/env python3
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 def main(inp, outp):
     df = pd.read_csv(inp)
     if df.empty:
         fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.text(0.5, 0.5, 'No data to display',
+                ha='center', va='center', fontsize=14)
         ax.axis('off')
         plt.savefig(outp)
         return
-    pivot = df.pivot(index='PrdTypName', columns='Reason', values='RecBreaks').fillna(0)
-    fig, ax = plt.subplots(figsize=(10,6))
-    pivot.plot(kind='bar', ax=ax)
-    for container in ax.containers:
-        ax.bar_label(container, fmt='%.0f', label_type='edge', padding=2, fontsize=9)
-    plt.xticks(rotation=45, ha='right')
+
+    products = df['Product'].unique()
+    reasons  = df['BreakReason'].unique()
+
+    xpos = []
+    ypos = []
+    zpos = []
+    dx   = []
+    dy   = []
+    dz   = []
+
+    for i, prod in enumerate(products):
+        for j, reason in enumerate(reasons):
+            subset = df[(df.Product == prod) & (df.BreakReason == reason)]
+            cnt = int(subset.RecBreaks.sum()) if not subset.empty else 0
+            xpos.append(i)
+            ypos.append(j)
+            zpos.append(0)
+            dx.append(0.6)
+            dy.append(0.6)
+            dz.append(cnt)
+
+    fig = plt.figure(figsize=(10,6))
+    ax  = fig.add_subplot(111, projection='3d')
+    ax.bar3d(xpos, ypos, zpos, dx, dy, dz)
+
+    ax.set_xticks(range(len(products)))
+    ax.set_xticklabels(products, rotation=45, ha='right')
+    ax.set_yticks(range(len(reasons)))
+    ax.set_yticklabels(reasons)
+    ax.set_xlabel('Product')
+    ax.set_ylabel('Break Reason')
+    ax.set_zlabel('Rec Breaks')
+
     plt.tight_layout()
     plt.savefig(outp)
 
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_rec_breaks_chart.py <in.csv> <out.png>", file=sys.stderr)
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("Usage: python generate_rec_breaks_3_axis_chart.py <in.csv> <out.png>",
+              file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
-```
-
-**File:** `PythonScripts/generate_mtm_contracts_booked_chart.py`
-
-```python
-#!/usr/bin/env python3
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-    fig, ax = plt.subplots(figsize=(10,6))
-    ax.plot(df['Week'], df['MtmContractsBooked'], marker='o')
-    for x, y in zip(df['Week'], df['MtmContractsBooked']):
-        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_mtm_contracts_booked_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-**File:** `PythonScripts/generate_otc_contracts_booked_chart.py`
-
-```python
-#!/usr/bin/env python3
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
-        ax.axis('off')
-        plt.savefig(outp)
-        return
-    fig, ax = plt.subplots(figsize=(10,6))
-    ax.plot(df['Week'], df['MtmContractsBooked'], marker='o', label='MTM Booked')
-    ax.plot(df['Week'], df['DealsBooked'],        marker='s', label='Deals Booked')
-    for x, y in zip(df['Week'], df['MtmContractsBooked']):
-        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
-    for x, y in zip(df['Week'], df['DealsBooked']):
-        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
-    ax.legend()
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage: python generate_otc_contracts_booked_chart.py <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### 7. Worker integration
-
-**File:** `Workers/ChartUpdaterWorker.cs`
-
-```csharp
-using Microsoft.Extensions.Hosting;
-using StarTrends.Models;
-using StarTrends.Services;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-
-public class ChartUpdaterWorker : BackgroundService
-{
-    private readonly IOracleDataService _oracle;
-    private readonly IChartGeneratorService _chartGen;
-    private readonly string _csvDir;
-    private readonly string _chartDir;
-    private readonly string _metaFile;
-    private readonly int _maxKeep = 10;
-
-    public ChartUpdaterWorker(
-        IOracleDataService oracle,
-        IChartGeneratorService chartGen,
-        IConfiguration config)
-    {
-        _oracle   = oracle;
-        _chartGen = chartGen;
-        _csvDir   = config["Paths:CsvDir"];
-        _chartDir = config["Paths:ChartDir"];
-        _metaFile = Path.Combine(_chartDir, "metadata.json");
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            var now   = DateTime.UtcNow;
-            var fourW = now.Date.AddDays(-28);
-            var fourY = now.Date.AddYears(-4);
-
-            // Rec-breaks
-            var recData = await _oracle.GetRecBreaksCountAsync(fourW, now);
-            var recUrl  = await _chartGen.GenerateRecBreaksChartAsync(recData);
-
-            // MTM contracts
-            var mtmData = await _oracle.GetMtmContractsBookedAsync(fourY, now);
-            var mtmUrl  = await _chartGen.GenerateMtmContractsBookedChartAsync(mtmData);
-
-            // OTC contracts
-            var otcData = await _oracle.GetOtcContractsBookedAsync(fourY, now);
-            var otcUrl  = await _chartGen.GenerateOtcContractsBookedChartAsync(otcData);
-
-            // Load or init metadata.json
-            var meta = File.Exists(_metaFile)
-                ? JsonSerializer.Deserialize<Dictionary<string, ChartMeta>>(await File.ReadAllTextAsync(_metaFile))
-                : new Dictionary<string, ChartMeta>();
-
-            // Update entries
-            meta["rec_breaks_top5"]      = new ChartMeta(recUrl, now);
-            meta["mtm_contracts_booked"] = new ChartMeta(mtmUrl, now);
-            meta["otc_contracts_booked"] = new ChartMeta(otcUrl, now);
-
-            // Prune old files
-            CleanupOldFiles(_chartDir, "rec_breaks_*.png",  _maxKeep);
-            CleanupOldFiles(_csvDir,   "rec_breaks_*.csv",  _maxKeep);
-            CleanupOldFiles(_chartDir, "mtm_contracts_booked_*.png", _maxKeep);
-            CleanupOldFiles(_csvDir,   "mtm_contracts_booked_*.csv", _maxKeep);
-            CleanupOldFiles(_chartDir, "otc_contracts_booked_*.png", _maxKeep);
-            CleanupOldFiles(_csvDir,   "otc_contracts_booked_*.csv", _maxKeep);
-
-            // Write metadata.json
-            await File.WriteAllTextAsync(_metaFile,
-                JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
-
-            // Wait one hour
-            await Task.Delay(TimeSpan.FromHours(1), ct);
-        }
-    }
-
-    private void CleanupOldFiles(string folder, string pattern, int keep)
-    {
-        var files = new DirectoryInfo(folder)
-            .GetFiles(pattern)
-            .OrderByDescending(f => f.CreationTimeUtc)
-            .Skip(keep);
-        foreach (var f in files) f.Delete();
-    }
-
-    private class ChartMeta
-    {
-        public string ImageUrl    { get; set; }
-        public DateTime LastUpdated { get; set; }
-        public ChartMeta() { }
-        public ChartMeta(string url, DateTime ts)
-        {
-            ImageUrl    = url;
-            LastUpdated = ts;
-        }
-    }
-}
-```
-
-### 8. UI component
-
-Wherever you need each chart (e.g. in `/Pages/Dashboard.razor`):
-
-```razor
-<GraphBox GraphId="rec_breaks_top5"
-          Title="OTC Top 5 Products Causing Intra-day Reconciliation Breaks (Last 4 Weeks)" />
-
-<GraphBox GraphId="mtm_contracts_booked"
-          Title="MTM Contracts Booked per Week (Last 4 Years, Excluding Synthetics)" />
-
-<GraphBox GraphId="otc_contracts_booked"
-          Title="OTC Contracts Booked per Week (Last 4 Years, Excluding Synthetics)" />
 ```
 
 ---
 
-With these **24** files/methods in place, your background worker will:
+#### How to wire it up in Blazor
 
-1. Fetch each dataset with **full** SQL.
-2. Generate timestamped CSVs and PNGs via Python.
-3. Update `metadata.json` every run.
-4. `<GraphBox>` will automatically pull the latest `ImageUrl` and `LastUpdated`.
+1. **Fetch & generate**: in your page/component call
 
-Let me know if any tweaks are needed!
+   ```csharp
+   var recData = await _yourService.GetTopIntraDayRecBreaksAsync(
+       DateTime.Today.AddDays(-28),
+       DateTime.Today, 5);
+   var imgUrl = await _yourService.GenerateRecBreaks3AxisChartAsync(recData);
+   ```
+2. **Display**: bind that URL to an `<img src="..." />` just like your other charts.
+
+This keeps everything modular, matches your existing file/CSV/Python patterns, and surfaces any errors in your logs.
+
+
+
+
+
+```csharp
+// ----------------------------------------------------------------
+// OTC Rec Breaks Top-5 (Last 4 Weeks)
+// ----------------------------------------------------------------
+_log.LogInformation("=== Starting OTC Rec Breaks Top-5 (Last 4 Weeks) update at {Time} ===", DateTime.UtcNow);
+var rec4wkUrl = await generator.GenerateRecBreaks3AxisChartAsync(await oracle.GetTopIntraDayRecBreaksAsync(DateTime.UtcNow.AddDays(-28), DateTime.UtcNow, 5));
+metadata["otc_rec_breaks_4wk"] = new { ImageUrl = rec4wkUrl, LastUpdated = DateTime.UtcNow };
+_log.LogInformation("Updated Chart and Meta data, wrote otc_rec_breaks_4wk.png -> {Url}", rec4wkUrl);
+```
+
+
+
+
+
+
+
+
+<GraphBox 
+    GraphID="otc_rec_breaks_4wk" 
+    Title="OTC Top 5 Products Causing Intra-day Rec Breaks (Last 4 Weeks)" />
+
