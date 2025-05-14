@@ -1,119 +1,386 @@
-Here are the **8 steps**—in the same one-liner/module style—to add your **MTM Contracts Booked per Week (Last 4 Years)** line-chart:
+Below are the **8 steps** for each of the three new charts. I’ve kept the graph type out of names/paths—only you and I know which is which.
 
 ---
 
-### 1. Model
+## 1️⃣ OTC Contracts Booked per Week (Last 4 Years, Excluding Synthetics)
 
-```csharp
-public class MtmContractCount
-{
-    public DateTime Week  { get; set; }
-    public int      Count { get; set; }
-}
-```
+1. **Model**
 
-### 2. IOracleDataService
+   ```csharp
+   public class OtcContractCount
+   {
+       public DateTime Week        { get; set; }
+       public int      DealsBooked { get; set; }
+   }
+   ```
 
-```csharp
-Task<IEnumerable<MtmContractCount>> GetMtmContractsBookedAsync(DateTime fromDate, DateTime toDate);
-```
+2. **IOracleDataService**
 
-### 3. OracleDataService
+   ```csharp
+   Task<IEnumerable<OtcContractCount>> GetOtcContractsBookedAsync(DateTime fromDate, DateTime toDate);
+   ```
 
-```csharp
-public async Task<IEnumerable<MtmContractCount>> GetMtmContractsBookedAsync(DateTime fromDate, DateTime toDate)
-{
-    var list = new List<MtmContractCount>();
-    await using var conn = new OracleConnection(_connectionString);
-    await conn.OpenAsync();
-    const string sql = @"
-SELECT TRUNC(inp_dt,'IW') AS Week, COUNT(1) AS Count
-  FROM star_contract PARTITION(product_oth)
- WHERE inp_dt BETWEEN :fromDate AND :toDate
-   AND con_no IN (SELECT con_no FROM star_mtm WHERE lgcl_del_flg='N')
-   AND mrr_typ_cod IN (0,1,6)
- GROUP BY TRUNC(inp_dt,'IW')
- ORDER BY TRUNC(inp_dt,'IW')";
-    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
-    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
-    await using var rdr = await cmd.ExecuteReaderAsync();
-    while (await rdr.ReadAsync())
-        list.Add(new MtmContractCount {
-            Week  = rdr.GetDateTime(rdr.GetOrdinal("Week")),
-            Count = rdr.GetInt32 (rdr.GetOrdinal("Count"))
-        });
-    return list;
-}
-```
+3. **OracleDataService**
 
-### 4. IChartGeneratorService
+   ```csharp
+   public async Task<IEnumerable<OtcContractCount>> GetOtcContractsBookedAsync(DateTime fromDate, DateTime toDate)
+   {
+       var list = new List<OtcContractCount>();
+       await using var conn = new OracleConnection(_connectionString);
+       await conn.OpenAsync();
+       const string sql = @"
+   SELECT 
+     TRUNC(c.inp_dt,'DAY') AS Week,
+     COUNT(1)              AS DealsBooked
+   FROM star_contract PARTITION(product_oth) c
+   WHERE c.mrr_typ_cod IN (0,1,6)
+     AND c.inp_dt   > :fromDate
+     AND c.inp_dt   < :toDate
+   GROUP BY TRUNC(c.inp_dt,'DAY')
+   ORDER BY Week ASC";
+       await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+       cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
+       cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+       await using var rdr = await cmd.ExecuteReaderAsync();
+       while (await rdr.ReadAsync())
+           list.Add(new OtcContractCount {
+               Week        = rdr.GetDateTime(rdr.GetOrdinal("Week")),
+               DealsBooked = rdr.GetInt32   (rdr.GetOrdinal("DealsBooked"))
+           });
+       return list;
+   }
+   ```
 
-```csharp
-Task<string> GenerateMtmContractsLineChartAsync(IEnumerable<MtmContractCount> data);
-```
+4. **IChartGeneratorService**
 
-### 5. ChartGeneratorService
+   ```csharp
+   Task<string> GenerateOtcContractsChartAsync(IEnumerable<OtcContractCount> data);
+   ```
 
-```csharp
-public async Task<string> GenerateMtmContractsLineChartAsync(IEnumerable<MtmContractCount> data)
-{
-    var ts      = DateTime.UtcNow:ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir,   $"mtm_contracts_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"mtm_contracts_{ts}.png");
-    await File.WriteAllTextAsync(csvPath,
-        "Week,Count\n" +
-        string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.Count}")));
-    var script = Path.Combine(_scriptDir,"generate_mtm_contracts_line_chart.py");
-    var psi    = new ProcessStartInfo("python",$"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-    { RedirectStandardError=true, UseShellExecute=false };
-    using var proc = Process.Start(psi) 
-                  ?? throw new InvalidOperationException("Could not start Python");
-    var err = await proc.StandardError.ReadToEndAsync();
-    await proc.WaitForExitAsync();
-    if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
-    return $"/charts/{Path.GetFileName(pngPath)}";
-}
-```
+5. **ChartGeneratorService**
 
-### 6. Python script
+   ```csharp
+   public async Task<string> GenerateOtcContractsChartAsync(IEnumerable<OtcContractCount> data)
+   {
+       var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+       var csvPath = Path.Combine(_csvDir,   $"otc_contracts_{ts}.csv");
+       var pngPath = Path.Combine(_chartDir, $"otc_contracts_{ts}.png");
 
-```python
-# generate_mtm_contracts_line_chart.py
-import sys, pandas as pd, matplotlib.pyplot as plt
-def main(inp,outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    fig, ax = plt.subplots(figsize=(10,5))
-    if df.empty:
-        ax.text(0.5,0.5,'No data to display',ha='center',va='center',fontsize=14)
-        ax.axis('off')
-    else:
-        ax.plot(df['Week'], df['Count'], marker='o')
-        ax.set_xlabel('Week'); ax.set_ylabel('MTM Contracts')
-        ax.tick_params(axis='x',rotation=45)
-        plt.tight_layout()
-    plt.savefig(outp)
-if __name__=='__main__':
-    if len(sys.argv)!=3: sys.exit("Usage: script <in.csv> <out.png>")
-    main(sys.argv[1],sys.argv[2])
-```
+       await File.WriteAllTextAsync(csvPath,
+           "Week,DealsBooked\n" +
+           string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.DealsBooked}")));
 
-### 7. ChartUpdaterWorker.cs
+       var script = Path.Combine(_scriptDir, "generate_otc_contracts_chart.py");
+       var psi = new ProcessStartInfo("python",
+           $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+       { RedirectStandardError = true, UseShellExecute = false };
 
-```csharp
-// ----------------------------------------------------------------
-// MTM Contracts Booked per Week (Last 4 Years)
-// ----------------------------------------------------------------
-_log.LogInformation("=== Starting MTM Contracts line-chart update at {Time} ===",DateTime.UtcNow);
-var mtmData = await oracle.GetMtmContractsBookedAsync(
-    DateTime.UtcNow.AddYears(-4), DateTime.UtcNow);
-var mtmUrl  = await generator.GenerateMtmContractsLineChartAsync(mtmData);
-metadata["mtm_contracts_4yr"] = new { ImageUrl=mtmUrl, LastUpdated=DateTime.UtcNow };
-_log.LogInformation("Updated Chart and Meta data, wrote mtm_contracts_4yr.png -> {Url}",mtmUrl);
-```
+       using var proc = Process.Start(psi)
+                     ?? throw new InvalidOperationException("Could not start Python");
+       var err = await proc.StandardError.ReadToEndAsync();
+       await proc.WaitForExitAsync();
+       if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
 
-### 8. Razor page
+       return $"/charts/{Path.GetFileName(pngPath)}";
+   }
+   ```
 
-```razor
-<GraphBox GraphID="mtm_contracts_4yr" Title="MTM Contracts Booked per Week (Last 4 Years)" />
-```
+6. **Python script** (`generate_otc_contracts_chart.py`)
+
+   ```python
+   import sys, pandas as pd, matplotlib.pyplot as plt
+   def main(inp, outp):
+       df = pd.read_csv(inp, parse_dates=['Week'])
+       fig, ax = plt.subplots(figsize=(10,5))
+       if df.empty:
+           ax.text(0.5,0.5,'No data to display',ha='center',va='center',fontsize=14)
+           ax.axis('off')
+       else:
+           ax.plot(df['Week'], df['DealsBooked'], marker='o')
+           ax.set_xlabel('Week'); ax.set_ylabel('Deals booked')
+           ax.tick_params(axis='x',rotation=45)
+           plt.tight_layout()
+       plt.savefig(outp)
+   if __name__=='__main__':
+       if len(sys.argv)!=3: sys.exit(1)
+       main(sys.argv[1],sys.argv[2])
+   ```
+
+7. **ChartUpdaterWorker.cs**
+
+   ```csharp
+   // ----------------------------------------------------------------
+   // OTC Contracts Booked per Week (Last 4 Years, Excl. Synthetics)
+   // ----------------------------------------------------------------
+   _log.LogInformation("=== Starting OTC contracts update at {Time} ===", DateTime.UtcNow);
+   var otcData = await oracle.GetOtcContractsBookedAsync(
+       DateTime.UtcNow.AddYears(-4), DateTime.UtcNow);
+   var otcUrl  = await generator.GenerateOtcContractsChartAsync(otcData);
+   metadata["otc_contracts_weekly"] = new { ImageUrl = otcUrl, LastUpdated = DateTime.UtcNow };
+   _log.LogInformation("Updated Chart and Meta data -> {Url}", otcUrl);
+   ```
+
+8. **Razor**
+
+   ```razor
+   <GraphBox GraphID="otc_contracts_weekly"
+             Title="OTC Contracts Booked per Week (Last 4 Years, Excluding Synthetics)" />
+   ```
+
+---
+
+## 2️⃣ Active Users by Role (Last Month)
+
+1. **Model**
+
+   ```csharp
+   public class ActiveUserRoleCount
+   {
+       public string Role          { get; set; }
+       public int    UserCount     { get; set; }
+   }
+   ```
+
+2. **IOracleDataService**
+
+   ```csharp
+   Task<IEnumerable<ActiveUserRoleCount>> GetActiveUsersByRoleAsync(DateTime since);
+   ```
+
+3. **OracleDataService**
+
+   ```csharp
+   public async Task<IEnumerable<ActiveUserRoleCount>> GetActiveUsersByRoleAsync(DateTime since)
+   {
+       var list = new List<ActiveUserRoleCount>();
+       await using var conn = new OracleConnection(_connectionString);
+       await conn.OpenAsync();
+       const string sql = @"
+   SELECT g.dsc AS Role,
+          COUNT(DISTINCT l.supp_user) AS UserCount
+     FROM star_login_audit l
+     JOIN gfit_groups g ON g.emp_grp_cod = l.emp_grp_cod
+    WHERE TRUNC(l.upd_timestamp) > :since
+      AND l.adt_act = 'LIN'
+      AND l.adt_appl = 'POL'
+      AND l.supp_user = l.asmd_user
+      AND l.appl_ver <> '1.0.0'
+   GROUP BY g.dsc
+   ORDER BY UserCount DESC";
+       await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+       cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
+       await using var rdr = await cmd.ExecuteReaderAsync();
+       while (await rdr.ReadAsync())
+           list.Add(new ActiveUserRoleCount {
+               Role      = rdr.GetString(rdr.GetOrdinal("Role")),
+               UserCount = rdr.GetInt32 (rdr.GetOrdinal("UserCount"))
+           });
+       return list;
+   }
+   ```
+
+4. **IChartGeneratorService**
+
+   ```csharp
+   Task<string> GenerateActiveUsersByRoleChartAsync(IEnumerable<ActiveUserRoleCount> data);
+   ```
+
+5. **ChartGeneratorService**
+
+   ```csharp
+   public async Task<string> GenerateActiveUsersByRoleChartAsync(IEnumerable<ActiveUserRoleCount> data)
+   {
+       var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+       var csvPath = Path.Combine(_csvDir,   $"users_by_role_{ts}.csv");
+       var pngPath = Path.Combine(_chartDir, $"users_by_role_{ts}.png");
+
+       await File.WriteAllTextAsync(csvPath,
+           "Role,UserCount\n" +
+           string.Join("\n", data.Select(d => $"{d.Role},{d.UserCount}")));
+
+       var script = Path.Combine(_scriptDir, "generate_users_by_role_chart.py");
+       var psi = new ProcessStartInfo("python",
+           $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+       { RedirectStandardError = true, UseShellExecute = false };
+
+       using var proc = Process.Start(psi)
+                     ?? throw new InvalidOperationException("Could not start Python");
+       var err = await proc.StandardError.ReadToEndAsync();
+       await proc.WaitForExitAsync();
+       if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
+
+       return $"/charts/{Path.GetFileName(pngPath)}";
+   }
+   ```
+
+6. **Python script** (`generate_users_by_role_chart.py`)
+
+   ```python
+   import sys, pandas as pd, matplotlib.pyplot as plt
+   def main(inp,outp):
+       df = pd.read_csv(inp)
+       fig, ax = plt.subplots(figsize=(10,6))
+       if df.empty:
+           ax.text(0.5,0.5,'No data to display',ha='center',va='center'); ax.axis('off')
+       else:
+           ax.bar(df['Role'], df['UserCount'])
+           for i, v in enumerate(df['UserCount']):
+               ax.text(i, v, str(v), ha='center', va='bottom')
+           plt.xticks(rotation=45, ha='right')
+           plt.tight_layout()
+       plt.savefig(outp)
+   if __name__=='__main__':
+       if len(sys.argv)!=3: sys.exit(1)
+       main(sys.argv[1],sys.argv[2])
+   ```
+
+7. **ChartUpdaterWorker.cs**
+
+   ```csharp
+   // ----------------------------------------------------------------
+   // Active Users by Role (Last Month)
+   // ----------------------------------------------------------------
+   _log.LogInformation("=== Starting active-users-by-role update at {Time} ===", DateTime.UtcNow);
+   var roleData = await oracle.GetActiveUsersByRoleAsync(DateTime.UtcNow.AddDays(-30));
+   var roleUrl  = await generator.GenerateActiveUsersByRoleChartAsync(roleData);
+   metadata["active_users_by_role_last_month"] = new { ImageUrl = roleUrl, LastUpdated = DateTime.UtcNow };
+   _log.LogInformation("Updated Chart and Meta data -> {Url}", roleUrl);
+   ```
+
+8. **Razor**
+
+   ```razor
+   <GraphBox GraphID="active_users_by_role_last_month"
+             Title="Active Users by Role (Last Month)" />
+   ```
+
+---
+
+## 3️⃣ Active Users per Location (Last Month)
+
+1. **Model**
+
+   ```csharp
+   public class ActiveUserLocationCount
+   {
+       public string Location { get; set; }
+       public int    Users    { get; set; }
+   }
+   ```
+
+2. **IOracleDataService**
+
+   ```csharp
+   Task<IEnumerable<ActiveUserLocationCount>> GetActiveUsersByLocationAsync(DateTime since);
+   ```
+
+3. **OracleDataService**
+
+   ```csharp
+   public async Task<IEnumerable<ActiveUserLocationCount>> GetActiveUsersByLocationAsync(DateTime since)
+   {
+       var list = new List<ActiveUserLocationCount>();
+       await using var conn = new OracleConnection(_connectionString);
+       await conn.OpenAsync();
+       const string sql = @"
+   SELECT lo.loc_name AS Location,
+          COUNT(DISTINCT l.supp_user) AS Users
+     FROM (
+       SELECT *,
+              CASE WHEN adt_loc='NYC' THEN 'NYK' ELSE adt_loc END AS loc
+         FROM star_login_audit
+       ) l
+     JOIN star_echo_location lo ON l.loc = lo.loc_id
+     JOIN gfit_groups g ON g.emp_grp_cod = l.emp_grp_cod
+    WHERE TRUNC(l.upd_timestamp) > :since
+      AND l.adt_act = 'LIN'
+      AND l.adt_appl = 'POL'
+      AND l.supp_user = l.asmd_user
+      AND l.appl_ver <> '1.0.0'
+   GROUP BY lo.loc_name
+   ORDER BY Users DESC";
+       await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+       cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
+       await using var rdr = await cmd.ExecuteReaderAsync();
+       while (await rdr.ReadAsync())
+           list.Add(new ActiveUserLocationCount {
+               Location = rdr.GetString(rdr.GetOrdinal("Location")),
+               Users    = rdr.GetInt32 (rdr.GetOrdinal("Users"))
+           });
+       return list;
+   }
+   ```
+
+4. **IChartGeneratorService**
+
+   ```csharp
+   Task<string> GenerateActiveUsersByLocationChartAsync(IEnumerable<ActiveUserLocationCount> data);
+   ```
+
+5. **ChartGeneratorService**
+
+   ```csharp
+   public async Task<string> GenerateActiveUsersByLocationChartAsync(IEnumerable<ActiveUserLocationCount> data)
+   {
+       var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+       var csvPath = Path.Combine(_csvDir,   $"users_by_location_{ts}.csv");
+       var pngPath = Path.Combine(_chartDir, $"users_by_location_{ts}.png");
+
+       await File.WriteAllTextAsync(csvPath,
+           "Location,Users\n" +
+           string.Join("\n", data.Select(d => $"{d.Location},{d.Users}")));
+
+       var script = Path.Combine(_scriptDir, "generate_users_by_location_chart.py");
+       var psi = new ProcessStartInfo("python",
+           $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+       { RedirectStandardError = true, UseShellExecute = false };
+
+       using var proc = Process.Start(psi)
+                     ?? throw new InvalidOperationException("Could not start Python");
+       var err = await proc.StandardError.ReadToEndAsync();
+       await proc.WaitForExitAsync();
+       if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
+
+       return $"/charts/{Path.GetFileName(pngPath)}";
+   }
+   ```
+
+6. **Python script** (`generate_users_by_location_chart.py`)
+
+   ```python
+   import sys, pandas as pd, matplotlib.pyplot as plt
+   def main(inp,outp):
+       df = pd.read_csv(inp)
+       fig, ax = plt.subplots(figsize=(10,6))
+       if df.empty:
+           ax.text(0.5,0.5,'No data to display',ha='center',va='center'); ax.axis('off')
+       else:
+           ax.bar(df['Location'], df['Users'])
+           for i, v in enumerate(df['Users']):
+               ax.text(i, v, str(v), ha='center', va='bottom')
+           plt.xticks(rotation=45, ha='right'); plt.tight_layout()
+       plt.savefig(outp)
+   if __name__=='__main__':
+       if len(sys.argv)!=3: sys.exit(1)
+       main(sys.argv[1],sys.argv[2])
+   ```
+
+7. **ChartUpdaterWorker.cs**
+
+   ```csharp
+   // ----------------------------------------------------------------
+   // Active Users per Location (Last Month)
+   // ----------------------------------------------------------------
+   _log.LogInformation("=== Starting active-users-by-location update at {Time} ===", DateTime.UtcNow);
+   var locData = await oracle.GetActiveUsersByLocationAsync(DateTime.UtcNow.AddDays(-30));
+   var locUrl  = await generator.GenerateActiveUsersByLocationChartAsync(locData);
+   metadata["active_users_by_location_last_month"] = new { ImageUrl = locUrl, LastUpdated = DateTime.UtcNow };
+   _log.LogInformation("Updated Chart and Meta data -> {Url}", locUrl);
+   ```
+
+8. **Razor**
+
+   ```razor
+   <GraphBox GraphID="active_users_by_location_last_month"
+             Title="Active Users per Location (Last Month)" />
+   ```
