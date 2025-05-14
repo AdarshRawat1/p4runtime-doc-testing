@@ -1,3 +1,11 @@
+
+// in IOracleDataService.cs
+Task<IEnumerable<RecBreakData>> GetTopIntraDayRecBreaksAsync(DateTime fromDate, DateTime toDate, int topN);
+
+// in IChartGeneratorService.cs (or IChartService.cs)
+Task<string> GenerateRecBreaks3AxisChartAsync(IEnumerable<RecBreakData> data);
+
+
 Below is a pair of methods and a matching Python script that follow exactly the same style as your existing “per‐thousand” and “product trades” implementations. You can drop these into your same service class (where `_csvDir`, `_chartDir`, `_scriptDir` and `_log` are already defined) and point your Blazor page at the new chart URL.
 
 ---
