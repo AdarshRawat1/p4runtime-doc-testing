@@ -1,3 +1,12 @@
+if df.empty:
+    fig = plt.figure(figsize=(8,4))
+    ax  = fig.add_subplot(111)
+    ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14)
+    ax.axis('off')
+    plt.savefig(outp)
+    return
+
+
 Below is the **8-step, end-to-end integration** for your three charts, using your exact titles and without renaming them. You can copy each block into your project.
 
 ---
