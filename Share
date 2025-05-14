@@ -1,3 +1,58 @@
+The ORA-00923 is telling you your `FROM` clause is malformed. The easiest fix is to ditch the old-style comma join altogether and write everything as explicit `JOIN`s. For example, replace your current SQL in `GetActiveUsersByLocationAsync` with this:
+
+```csharp
+const string sql = @"
+SELECT 
+  lo.loc_name           AS Location,
+  COUNT(DISTINCT a.supp_user) AS Users
+FROM star_login_audit a
+  JOIN gfit_groups g 
+    ON g.emp_grp_cod = a.emp_grp_cod
+  JOIN star_echo_location lo 
+    ON (CASE WHEN a.adt_loc = 'NYC' THEN 'NYK' ELSE a.adt_loc END) = lo.loc_id
+WHERE 
+  a.mod_dt > :since
+  AND a.adt_act = 'LIN'
+  AND a.adt_appl = 'POL'
+  AND a.supp_user = a.asmd_user
+  AND a.appl_ver <> '1.0.0'
+GROUP BY lo.loc_name
+ORDER BY Users DESC";
+```
+
+Then your method becomes:
+
+```csharp
+public async Task<IEnumerable<ActiveUserLocationCount>> GetActiveUsersByLocationAsync(DateTime since)
+{
+    var list = new List<ActiveUserLocationCount>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+
+    const string sql = /* the block above */;
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
+
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+    {
+        list.Add(new ActiveUserLocationCount {
+            Location = rdr.GetString(rdr.GetOrdinal("Location")),
+            Users    = rdr.GetInt32 (rdr.GetOrdinal("Users"))
+        });
+    }
+    return list;
+}
+```
+
+This way there’s no mixing of comma-joins and ANSI `JOIN`s, and Oracle will find its `FROM` exactly where it expects.
+
+
+
+
+
+
+
 Below are the **8 steps** for each of the three new bar-charts, following the same modular pattern:
 
 ---
