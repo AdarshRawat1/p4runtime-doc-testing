@@ -1,236 +1,119 @@
-
-// in IOracleDataService.cs
-Task<IEnumerable<RecBreakData>> GetTopIntraDayRecBreaksAsync(DateTime fromDate, DateTime toDate, int topN);
-
-// in IChartGeneratorService.cs (or IChartService.cs)
-Task<string> GenerateRecBreaks3AxisChartAsync(IEnumerable<RecBreakData> data);
-
-
-Below is a pair of methods and a matching Python script that follow exactly the same style as your existing “per‐thousand” and “product trades” implementations. You can drop these into your same service class (where `_csvDir`, `_chartDir`, `_scriptDir` and `_log` are already defined) and point your Blazor page at the new chart URL.
+Here are the **8 steps**—in the same one-liner/module style—to add your **MTM Contracts Booked per Week (Last 4 Years)** line-chart:
 
 ---
 
-### 1. Fetch the top-5 intra-day rec-breaks data
+### 1. Model
 
 ```csharp
-public async Task<IEnumerable<RecBreakData>> GetTopIntraDayRecBreaksAsync(
-    DateTime fromDate, DateTime toDate, int topN)
+public class MtmContractCount
 {
-    var list = new List<RecBreakData>();
+    public DateTime Week  { get; set; }
+    public int      Count { get; set; }
+}
+```
+
+### 2. IOracleDataService
+
+```csharp
+Task<IEnumerable<MtmContractCount>> GetMtmContractsBookedAsync(DateTime fromDate, DateTime toDate);
+```
+
+### 3. OracleDataService
+
+```csharp
+public async Task<IEnumerable<MtmContractCount>> GetMtmContractsBookedAsync(DateTime fromDate, DateTime toDate)
+{
+    var list = new List<MtmContractCount>();
     await using var conn = new OracleConnection(_connectionString);
     await conn.OpenAsync();
-
     const string sql = @"
-WITH recbreaks AS (
-  SELECT 
-    c.prd_typ_name    AS Product,
-    COUNT(1)           AS RecBreaks,
-    CASE
-      WHEN r.rec_brk_reason = 'TST' THEN 'Tech Problem - STP'
-      WHEN r.rec_brk_reason = 'RTE' THEN 'Tech Problem - Rec'
-      WHEN r.rec_brk_reason = 'MOE' THEN 'Manual Error - MO'
-      WHEN r.rec_brk_reason = 'FOE' THEN 'DC Error - FO'
-      WHEN r.rec_brk_reason = 'FID' THEN 'Fixings Discrepancy'
-      WHEN r.rec_brk_reason = 'CDS' THEN 'Calendar Data STAR'
-      WHEN r.rec_brk_reason = 'CDM' THEN 'Calendar Data Import'
-      ELSE r.rec_brk_reason
-    END               AS BreakReason
-  FROM star_rec_hist r
-  JOIN star_contract PARTITION(product_oth) c 
-    ON c.con_no = r.con_no
-  WHERE r.lst_mod_dt > :fromDate
-    AND r.lst_mod_dt < :toDate
-    AND r.rec_src = 'INT'
-    AND r.rec_sts = 'DIF'
-    AND r.rec_brk_reason NOT IN ('UNR','RFB')
-  GROUP BY c.prd_typ_name, r.rec_brk_reason
-),
-recbreaksorderd AS (
-  SELECT Product, SUM(RecBreaks) AS Total
-  FROM recbreaks
-  GROUP BY Product
-  ORDER BY Total DESC
-)
-SELECT *
-FROM recbreaks
-WHERE Product IN (
-  SELECT Product 
-  FROM recbreaksorderd 
-  WHERE ROWNUM <= :topN
-)
-ORDER BY Product, BreakReason";
-
+SELECT TRUNC(inp_dt,'IW') AS Week, COUNT(1) AS Count
+  FROM star_contract PARTITION(product_oth)
+ WHERE inp_dt BETWEEN :fromDate AND :toDate
+   AND con_no IN (SELECT con_no FROM star_mtm WHERE lgcl_del_flg='N')
+   AND mrr_typ_cod IN (0,1,6)
+ GROUP BY TRUNC(inp_dt,'IW')
+ ORDER BY TRUNC(inp_dt,'IW')";
     await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
     cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
     cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
-    cmd.Parameters.Add("topN",      OracleDbType.Int32).Value = topN;
-
     await using var rdr = await cmd.ExecuteReaderAsync();
     while (await rdr.ReadAsync())
-    {
-        list.Add(new RecBreakData {
-            Product   = rdr.GetString(rdr.GetOrdinal("Product")),
-            Reason    = rdr.GetString(rdr.GetOrdinal("BreakReason")),
-            RecBreaks = rdr.GetInt32(rdr.GetOrdinal("RecBreaks"))
+        list.Add(new MtmContractCount {
+            Week  = rdr.GetDateTime(rdr.GetOrdinal("Week")),
+            Count = rdr.GetInt32 (rdr.GetOrdinal("Count"))
         });
-    }
-
     return list;
 }
 ```
 
-> **Model** (`RecBreakData`) should match your existing pattern:
->
-> ```csharp
-> public class RecBreakData
-> {
->     public string Product    { get; set; }
->     public string Reason     { get; set; }
->     public int    RecBreaks  { get; set; }
-> }
-> ```
-
----
-
-### 2. Write CSV & invoke Python to build the 3-axis chart
+### 4. IChartGeneratorService
 
 ```csharp
-public async Task<string> GenerateRecBreaks3AxisChartAsync(
-    IEnumerable<RecBreakData> data)
+Task<string> GenerateMtmContractsLineChartAsync(IEnumerable<MtmContractCount> data);
+```
+
+### 5. ChartGeneratorService
+
+```csharp
+public async Task<string> GenerateMtmContractsLineChartAsync(IEnumerable<MtmContractCount> data)
 {
-    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir,   $"rec_breaks_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"rec_breaks_{ts}.png");
-
-    // write CSV in one go
+    var ts      = DateTime.UtcNow:ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir,   $"mtm_contracts_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"mtm_contracts_{ts}.png");
     await File.WriteAllTextAsync(csvPath,
-        "Product,BreakReason,RecBreaks\n" +
-        string.Join("\n", data.Select(d =>
-            $"{d.Product},{d.Reason},{d.RecBreaks}"))
-    );
-
-    // call the Python generator
-    var script = Path.Combine(_scriptDir, "generate_rec_breaks_3_axis_chart.py");
-    var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-    {
-        RedirectStandardError = true,
-        UseShellExecute        = false
-    };
-
-    using var proc = Process.Start(psi)
-                  ?? throw new InvalidOperationException("Could not start Python process");
+        "Week,Count\n" +
+        string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.Count}")));
+    var script = Path.Combine(_scriptDir,"generate_mtm_contracts_line_chart.py");
+    var psi    = new ProcessStartInfo("python",$"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    { RedirectStandardError=true, UseShellExecute=false };
+    using var proc = Process.Start(psi) 
+                  ?? throw new InvalidOperationException("Could not start Python");
     var err = await proc.StandardError.ReadToEndAsync();
     await proc.WaitForExitAsync();
-
-    if (!string.IsNullOrWhiteSpace(err))
-        _log.LogError(err);
-
+    if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
     return $"/charts/{Path.GetFileName(pngPath)}";
 }
 ```
 
----
-
-### 3. `generate_rec_breaks_3_axis_chart.py`
+### 6. Python script
 
 ```python
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
-def main(inp, outp):
-    df = pd.read_csv(inp)
+# generate_mtm_contracts_line_chart.py
+import sys, pandas as pd, matplotlib.pyplot as plt
+def main(inp,outp):
+    df = pd.read_csv(inp, parse_dates=['Week'])
+    fig, ax = plt.subplots(figsize=(10,5))
     if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5, 0.5, 'No data to display',
-                ha='center', va='center', fontsize=14)
+        ax.text(0.5,0.5,'No data to display',ha='center',va='center',fontsize=14)
         ax.axis('off')
-        plt.savefig(outp)
-        return
-
-    products = df['Product'].unique()
-    reasons  = df['BreakReason'].unique()
-
-    xpos = []
-    ypos = []
-    zpos = []
-    dx   = []
-    dy   = []
-    dz   = []
-
-    for i, prod in enumerate(products):
-        for j, reason in enumerate(reasons):
-            subset = df[(df.Product == prod) & (df.BreakReason == reason)]
-            cnt = int(subset.RecBreaks.sum()) if not subset.empty else 0
-            xpos.append(i)
-            ypos.append(j)
-            zpos.append(0)
-            dx.append(0.6)
-            dy.append(0.6)
-            dz.append(cnt)
-
-    fig = plt.figure(figsize=(10,6))
-    ax  = fig.add_subplot(111, projection='3d')
-    ax.bar3d(xpos, ypos, zpos, dx, dy, dz)
-
-    ax.set_xticks(range(len(products)))
-    ax.set_xticklabels(products, rotation=45, ha='right')
-    ax.set_yticks(range(len(reasons)))
-    ax.set_yticklabels(reasons)
-    ax.set_xlabel('Product')
-    ax.set_ylabel('Break Reason')
-    ax.set_zlabel('Rec Breaks')
-
-    plt.tight_layout()
+    else:
+        ax.plot(df['Week'], df['Count'], marker='o')
+        ax.set_xlabel('Week'); ax.set_ylabel('MTM Contracts')
+        ax.tick_params(axis='x',rotation=45)
+        plt.tight_layout()
     plt.savefig(outp)
-
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print("Usage: python generate_rec_breaks_3_axis_chart.py <in.csv> <out.png>",
-              file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
+if __name__=='__main__':
+    if len(sys.argv)!=3: sys.exit("Usage: script <in.csv> <out.png>")
+    main(sys.argv[1],sys.argv[2])
 ```
 
----
-
-#### How to wire it up in Blazor
-
-1. **Fetch & generate**: in your page/component call
-
-   ```csharp
-   var recData = await _yourService.GetTopIntraDayRecBreaksAsync(
-       DateTime.Today.AddDays(-28),
-       DateTime.Today, 5);
-   var imgUrl = await _yourService.GenerateRecBreaks3AxisChartAsync(recData);
-   ```
-2. **Display**: bind that URL to an `<img src="..." />` just like your other charts.
-
-This keeps everything modular, matches your existing file/CSV/Python patterns, and surfaces any errors in your logs.
-
-
-
-
+### 7. ChartUpdaterWorker.cs
 
 ```csharp
 // ----------------------------------------------------------------
-// OTC Rec Breaks Top-5 (Last 4 Weeks)
+// MTM Contracts Booked per Week (Last 4 Years)
 // ----------------------------------------------------------------
-_log.LogInformation("=== Starting OTC Rec Breaks Top-5 (Last 4 Weeks) update at {Time} ===", DateTime.UtcNow);
-var rec4wkUrl = await generator.GenerateRecBreaks3AxisChartAsync(await oracle.GetTopIntraDayRecBreaksAsync(DateTime.UtcNow.AddDays(-28), DateTime.UtcNow, 5));
-metadata["otc_rec_breaks_4wk"] = new { ImageUrl = rec4wkUrl, LastUpdated = DateTime.UtcNow };
-_log.LogInformation("Updated Chart and Meta data, wrote otc_rec_breaks_4wk.png -> {Url}", rec4wkUrl);
+_log.LogInformation("=== Starting MTM Contracts line-chart update at {Time} ===",DateTime.UtcNow);
+var mtmData = await oracle.GetMtmContractsBookedAsync(
+    DateTime.UtcNow.AddYears(-4), DateTime.UtcNow);
+var mtmUrl  = await generator.GenerateMtmContractsLineChartAsync(mtmData);
+metadata["mtm_contracts_4yr"] = new { ImageUrl=mtmUrl, LastUpdated=DateTime.UtcNow };
+_log.LogInformation("Updated Chart and Meta data, wrote mtm_contracts_4yr.png -> {Url}",mtmUrl);
 ```
 
+### 8. Razor page
 
-
-
-
-
-
-
-<GraphBox 
-    GraphID="otc_rec_breaks_4wk" 
-    Title="OTC Top 5 Products Causing Intra-day Rec Breaks (Last 4 Weeks)" />
-
+```razor
+<GraphBox GraphID="mtm_contracts_4yr" Title="MTM Contracts Booked per Week (Last 4 Years)" />
+```
