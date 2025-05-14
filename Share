@@ -1,386 +1,392 @@
-Below are the **8 steps** for each of the three new charts. I’ve kept the graph type out of names/paths—only you and I know which is which.
+Below are the **8 steps** for each of the three new bar-charts, following the same modular pattern:
 
 ---
 
-## 1️⃣ OTC Contracts Booked per Week (Last 4 Years, Excluding Synthetics)
+## 1️⃣ Slowest Deal Enquiry Searches (Last 7 Days, Top 25)
 
-1. **Model**
+**1. Model**
 
-   ```csharp
-   public class OtcContractCount
-   {
-       public DateTime Week        { get; set; }
-       public int      DealsBooked { get; set; }
-   }
-   ```
+```csharp
+public class SlowestDealSearch
+{
+    public string Search                { get; set; }
+    public int    AverageTimeSeconds    { get; set; }
+}
+```
 
-2. **IOracleDataService**
+**2. IOracleDataService**
 
-   ```csharp
-   Task<IEnumerable<OtcContractCount>> GetOtcContractsBookedAsync(DateTime fromDate, DateTime toDate);
-   ```
+```csharp
+Task<IEnumerable<SlowestDealSearch>> GetSlowestDealSearchesAsync(DateTime since, int topN);
+```
 
-3. **OracleDataService**
+**3. OracleDataService**
 
-   ```csharp
-   public async Task<IEnumerable<OtcContractCount>> GetOtcContractsBookedAsync(DateTime fromDate, DateTime toDate)
-   {
-       var list = new List<OtcContractCount>();
-       await using var conn = new OracleConnection(_connectionString);
-       await conn.OpenAsync();
-       const string sql = @"
-   SELECT 
-     TRUNC(c.inp_dt,'DAY') AS Week,
-     COUNT(1)              AS DealsBooked
-   FROM star_contract PARTITION(product_oth) c
-   WHERE c.mrr_typ_cod IN (0,1,6)
-     AND c.inp_dt   > :fromDate
-     AND c.inp_dt   < :toDate
-   GROUP BY TRUNC(c.inp_dt,'DAY')
-   ORDER BY Week ASC";
-       await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-       cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
-       cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
-       await using var rdr = await cmd.ExecuteReaderAsync();
-       while (await rdr.ReadAsync())
-           list.Add(new OtcContractCount {
-               Week        = rdr.GetDateTime(rdr.GetOrdinal("Week")),
-               DealsBooked = rdr.GetInt32   (rdr.GetOrdinal("DealsBooked"))
-           });
-       return list;
-   }
-   ```
+```csharp
+public async Task<IEnumerable<SlowestDealSearch>> GetSlowestDealSearchesAsync(DateTime since, int topN)
+{
+    var list = new List<SlowestDealSearch>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+    const string sql = @"
+SELECT Search, AverageTimeSeconds
+FROM (
+  SELECT NVL(a.detail,'(none)') AS Search,
+         TRUNC(AVG(a.duration_ms)/1000) AS AverageTimeSeconds
+    FROM star_action_audit a
+   WHERE a.mod_dt > :since
+     AND a.feature = 'Deal Enquiry - Run'
+   GROUP BY a.detail
+   HAVING COUNT(1) > 5
+   ORDER BY AVG(a.duration_ms) DESC
+)
+WHERE ROWNUM <= :topN";
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
+    cmd.Parameters.Add("topN",  OracleDbType.Int32).Value = topN;
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+        list.Add(new SlowestDealSearch {
+            Search             = rdr.GetString(rdr.GetOrdinal("Search")),
+            AverageTimeSeconds = rdr.GetInt32 (rdr.GetOrdinal("AverageTimeSeconds"))
+        });
+    return list;
+}
+```
 
-4. **IChartGeneratorService**
+**4. IChartGeneratorService**
 
-   ```csharp
-   Task<string> GenerateOtcContractsChartAsync(IEnumerable<OtcContractCount> data);
-   ```
+```csharp
+Task<string> GenerateSlowestDealSearchesChartAsync(IEnumerable<SlowestDealSearch> data);
+```
 
-5. **ChartGeneratorService**
+**5. ChartGeneratorService**
 
-   ```csharp
-   public async Task<string> GenerateOtcContractsChartAsync(IEnumerable<OtcContractCount> data)
-   {
-       var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-       var csvPath = Path.Combine(_csvDir,   $"otc_contracts_{ts}.csv");
-       var pngPath = Path.Combine(_chartDir, $"otc_contracts_{ts}.png");
+```csharp
+public async Task<string> GenerateSlowestDealSearchesChartAsync(IEnumerable<SlowestDealSearch> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir,   $"slowest_searches_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"slowest_searches_{ts}.png");
 
-       await File.WriteAllTextAsync(csvPath,
-           "Week,DealsBooked\n" +
-           string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.DealsBooked}")));
+    await File.WriteAllTextAsync(csvPath,
+        "Search,AverageTimeSeconds\n" +
+        string.Join("\n", data.Select(d =>
+            $"{d.Search},{d.AverageTimeSeconds}")));
 
-       var script = Path.Combine(_scriptDir, "generate_otc_contracts_chart.py");
-       var psi = new ProcessStartInfo("python",
-           $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-       { RedirectStandardError = true, UseShellExecute = false };
+    var script = Path.Combine(_scriptDir, "generate_slowest_searches_chart.py");
+    var psi = new ProcessStartInfo("python",
+        $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    { RedirectStandardError = true, UseShellExecute = false };
 
-       using var proc = Process.Start(psi)
-                     ?? throw new InvalidOperationException("Could not start Python");
-       var err = await proc.StandardError.ReadToEndAsync();
-       await proc.WaitForExitAsync();
-       if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Could not start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
 
-       return $"/charts/{Path.GetFileName(pngPath)}";
-   }
-   ```
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+```
 
-6. **Python script** (`generate_otc_contracts_chart.py`)
+**6. Python script** (`generate_slowest_searches_chart.py`)
 
-   ```python
-   import sys, pandas as pd, matplotlib.pyplot as plt
-   def main(inp, outp):
-       df = pd.read_csv(inp, parse_dates=['Week'])
-       fig, ax = plt.subplots(figsize=(10,5))
-       if df.empty:
-           ax.text(0.5,0.5,'No data to display',ha='center',va='center',fontsize=14)
-           ax.axis('off')
-       else:
-           ax.plot(df['Week'], df['DealsBooked'], marker='o')
-           ax.set_xlabel('Week'); ax.set_ylabel('Deals booked')
-           ax.tick_params(axis='x',rotation=45)
-           plt.tight_layout()
-       plt.savefig(outp)
-   if __name__=='__main__':
-       if len(sys.argv)!=3: sys.exit(1)
-       main(sys.argv[1],sys.argv[2])
-   ```
+```python
+import sys, pandas as pd, matplotlib.pyplot as plt
 
-7. **ChartUpdaterWorker.cs**
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    fig, ax = plt.subplots(figsize=(10,6))
+    if df.empty:
+        ax.text(0.5,0.5,'No data to display',ha='center',va='center',fontsize=14)
+        ax.axis('off')
+    else:
+        ax.bar(df['Search'], df['AverageTimeSeconds'])
+        for i, v in enumerate(df['AverageTimeSeconds']):
+            ax.text(i, v, str(v), ha='center', va='bottom')
+        plt.xticks(rotation=45, ha='right')
+        plt.ylabel('Average time (s)')
+        plt.tight_layout()
+    plt.savefig(outp)
 
-   ```csharp
-   // ----------------------------------------------------------------
-   // OTC Contracts Booked per Week (Last 4 Years, Excl. Synthetics)
-   // ----------------------------------------------------------------
-   _log.LogInformation("=== Starting OTC contracts update at {Time} ===", DateTime.UtcNow);
-   var otcData = await oracle.GetOtcContractsBookedAsync(
-       DateTime.UtcNow.AddYears(-4), DateTime.UtcNow);
-   var otcUrl  = await generator.GenerateOtcContractsChartAsync(otcData);
-   metadata["otc_contracts_weekly"] = new { ImageUrl = otcUrl, LastUpdated = DateTime.UtcNow };
-   _log.LogInformation("Updated Chart and Meta data -> {Url}", otcUrl);
-   ```
+if __name__=='__main__':
+    if len(sys.argv)!=3: sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
 
-8. **Razor**
+**7. ChartUpdaterWorker.cs**
 
-   ```razor
-   <GraphBox GraphID="otc_contracts_weekly"
-             Title="OTC Contracts Booked per Week (Last 4 Years, Excluding Synthetics)" />
-   ```
+```csharp
+// ----------------------------------------------------------------
+// Slowest Deal Enquiry Searches (Last 7 Days, Top 25)
+// ----------------------------------------------------------------
+_log.LogInformation("=== Starting slowest-deal-searches update at {Time} ===", DateTime.UtcNow);
+var searches = await oracle.GetSlowestDealSearchesAsync(DateTime.UtcNow.AddDays(-7), 25);
+var searchUrl = await generator.GenerateSlowestDealSearchesChartAsync(searches);
+metadata["slowest_deal_searches"] = new { ImageUrl = searchUrl, LastUpdated = DateTime.UtcNow };
+_log.LogInformation("Updated Chart and Meta data -> {Url}", searchUrl);
+```
 
----
+**8. Razor**
 
-## 2️⃣ Active Users by Role (Last Month)
-
-1. **Model**
-
-   ```csharp
-   public class ActiveUserRoleCount
-   {
-       public string Role          { get; set; }
-       public int    UserCount     { get; set; }
-   }
-   ```
-
-2. **IOracleDataService**
-
-   ```csharp
-   Task<IEnumerable<ActiveUserRoleCount>> GetActiveUsersByRoleAsync(DateTime since);
-   ```
-
-3. **OracleDataService**
-
-   ```csharp
-   public async Task<IEnumerable<ActiveUserRoleCount>> GetActiveUsersByRoleAsync(DateTime since)
-   {
-       var list = new List<ActiveUserRoleCount>();
-       await using var conn = new OracleConnection(_connectionString);
-       await conn.OpenAsync();
-       const string sql = @"
-   SELECT g.dsc AS Role,
-          COUNT(DISTINCT l.supp_user) AS UserCount
-     FROM star_login_audit l
-     JOIN gfit_groups g ON g.emp_grp_cod = l.emp_grp_cod
-    WHERE TRUNC(l.upd_timestamp) > :since
-      AND l.adt_act = 'LIN'
-      AND l.adt_appl = 'POL'
-      AND l.supp_user = l.asmd_user
-      AND l.appl_ver <> '1.0.0'
-   GROUP BY g.dsc
-   ORDER BY UserCount DESC";
-       await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-       cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
-       await using var rdr = await cmd.ExecuteReaderAsync();
-       while (await rdr.ReadAsync())
-           list.Add(new ActiveUserRoleCount {
-               Role      = rdr.GetString(rdr.GetOrdinal("Role")),
-               UserCount = rdr.GetInt32 (rdr.GetOrdinal("UserCount"))
-           });
-       return list;
-   }
-   ```
-
-4. **IChartGeneratorService**
-
-   ```csharp
-   Task<string> GenerateActiveUsersByRoleChartAsync(IEnumerable<ActiveUserRoleCount> data);
-   ```
-
-5. **ChartGeneratorService**
-
-   ```csharp
-   public async Task<string> GenerateActiveUsersByRoleChartAsync(IEnumerable<ActiveUserRoleCount> data)
-   {
-       var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-       var csvPath = Path.Combine(_csvDir,   $"users_by_role_{ts}.csv");
-       var pngPath = Path.Combine(_chartDir, $"users_by_role_{ts}.png");
-
-       await File.WriteAllTextAsync(csvPath,
-           "Role,UserCount\n" +
-           string.Join("\n", data.Select(d => $"{d.Role},{d.UserCount}")));
-
-       var script = Path.Combine(_scriptDir, "generate_users_by_role_chart.py");
-       var psi = new ProcessStartInfo("python",
-           $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-       { RedirectStandardError = true, UseShellExecute = false };
-
-       using var proc = Process.Start(psi)
-                     ?? throw new InvalidOperationException("Could not start Python");
-       var err = await proc.StandardError.ReadToEndAsync();
-       await proc.WaitForExitAsync();
-       if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
-
-       return $"/charts/{Path.GetFileName(pngPath)}";
-   }
-   ```
-
-6. **Python script** (`generate_users_by_role_chart.py`)
-
-   ```python
-   import sys, pandas as pd, matplotlib.pyplot as plt
-   def main(inp,outp):
-       df = pd.read_csv(inp)
-       fig, ax = plt.subplots(figsize=(10,6))
-       if df.empty:
-           ax.text(0.5,0.5,'No data to display',ha='center',va='center'); ax.axis('off')
-       else:
-           ax.bar(df['Role'], df['UserCount'])
-           for i, v in enumerate(df['UserCount']):
-               ax.text(i, v, str(v), ha='center', va='bottom')
-           plt.xticks(rotation=45, ha='right')
-           plt.tight_layout()
-       plt.savefig(outp)
-   if __name__=='__main__':
-       if len(sys.argv)!=3: sys.exit(1)
-       main(sys.argv[1],sys.argv[2])
-   ```
-
-7. **ChartUpdaterWorker.cs**
-
-   ```csharp
-   // ----------------------------------------------------------------
-   // Active Users by Role (Last Month)
-   // ----------------------------------------------------------------
-   _log.LogInformation("=== Starting active-users-by-role update at {Time} ===", DateTime.UtcNow);
-   var roleData = await oracle.GetActiveUsersByRoleAsync(DateTime.UtcNow.AddDays(-30));
-   var roleUrl  = await generator.GenerateActiveUsersByRoleChartAsync(roleData);
-   metadata["active_users_by_role_last_month"] = new { ImageUrl = roleUrl, LastUpdated = DateTime.UtcNow };
-   _log.LogInformation("Updated Chart and Meta data -> {Url}", roleUrl);
-   ```
-
-8. **Razor**
-
-   ```razor
-   <GraphBox GraphID="active_users_by_role_last_month"
-             Title="Active Users by Role (Last Month)" />
-   ```
+```razor
+<GraphBox GraphID="slowest_deal_searches"
+          Title="Slowest deal enquiry searches in last 7 days (Top 25)" />
+```
 
 ---
 
-## 3️⃣ Active Users per Location (Last Month)
+## 2️⃣ Slowest User Operations (Last 7 Days, Avg >15s & >5 Occurrences)
 
-1. **Model**
+**1. Model**
 
-   ```csharp
-   public class ActiveUserLocationCount
-   {
-       public string Location { get; set; }
-       public int    Users    { get; set; }
-   }
-   ```
+```csharp
+public class SlowestUserOperation
+{
+    public string OperationType        { get; set; }
+    public int    AverageTimeSeconds   { get; set; }
+}
+```
 
-2. **IOracleDataService**
+**2. IOracleDataService**
 
-   ```csharp
-   Task<IEnumerable<ActiveUserLocationCount>> GetActiveUsersByLocationAsync(DateTime since);
-   ```
+```csharp
+Task<IEnumerable<SlowestUserOperation>> GetSlowestUserOperationsAsync(DateTime since);
+```
 
-3. **OracleDataService**
+**3. OracleDataService**
 
-   ```csharp
-   public async Task<IEnumerable<ActiveUserLocationCount>> GetActiveUsersByLocationAsync(DateTime since)
-   {
-       var list = new List<ActiveUserLocationCount>();
-       await using var conn = new OracleConnection(_connectionString);
-       await conn.OpenAsync();
-       const string sql = @"
-   SELECT lo.loc_name AS Location,
-          COUNT(DISTINCT l.supp_user) AS Users
-     FROM (
-       SELECT *,
-              CASE WHEN adt_loc='NYC' THEN 'NYK' ELSE adt_loc END AS loc
-         FROM star_login_audit
-       ) l
-     JOIN star_echo_location lo ON l.loc = lo.loc_id
-     JOIN gfit_groups g ON g.emp_grp_cod = l.emp_grp_cod
-    WHERE TRUNC(l.upd_timestamp) > :since
-      AND l.adt_act = 'LIN'
-      AND l.adt_appl = 'POL'
-      AND l.supp_user = l.asmd_user
-      AND l.appl_ver <> '1.0.0'
-   GROUP BY lo.loc_name
-   ORDER BY Users DESC";
-       await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-       cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
-       await using var rdr = await cmd.ExecuteReaderAsync();
-       while (await rdr.ReadAsync())
-           list.Add(new ActiveUserLocationCount {
-               Location = rdr.GetString(rdr.GetOrdinal("Location")),
-               Users    = rdr.GetInt32 (rdr.GetOrdinal("Users"))
-           });
-       return list;
-   }
-   ```
+```csharp
+public async Task<IEnumerable<SlowestUserOperation>> GetSlowestUserOperationsAsync(DateTime since)
+{
+    var list = new List<SlowestUserOperation>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+    const string sql = @"
+SELECT feature AS OperationType,
+       TRUNC(AVG(a.duration_ms)/1000) AS AverageTimeSeconds
+  FROM star_action_audit a
+ WHERE a.mod_dt > :since
+ GROUP BY a.feature_type, a.feature
+HAVING AVG(a.duration_ms) > 15000
+   AND COUNT(1) > 5
+ ORDER BY AVG(a.duration_ms) DESC";
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+        list.Add(new SlowestUserOperation {
+            OperationType      = rdr.GetString(rdr.GetOrdinal("OperationType")),
+            AverageTimeSeconds = rdr.GetInt32 (rdr.GetOrdinal("AverageTimeSeconds"))
+        });
+    return list;
+}
+```
 
-4. **IChartGeneratorService**
+**4. IChartGeneratorService**
 
-   ```csharp
-   Task<string> GenerateActiveUsersByLocationChartAsync(IEnumerable<ActiveUserLocationCount> data);
-   ```
+```csharp
+Task<string> GenerateSlowestUserOperationsChartAsync(IEnumerable<SlowestUserOperation> data);
+```
 
-5. **ChartGeneratorService**
+**5. ChartGeneratorService**
 
-   ```csharp
-   public async Task<string> GenerateActiveUsersByLocationChartAsync(IEnumerable<ActiveUserLocationCount> data)
-   {
-       var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-       var csvPath = Path.Combine(_csvDir,   $"users_by_location_{ts}.csv");
-       var pngPath = Path.Combine(_chartDir, $"users_by_location_{ts}.png");
+```csharp
+public async Task<string> GenerateSlowestUserOperationsChartAsync(IEnumerable<SlowestUserOperation> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir,   $"slowest_ops_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"slowest_ops_{ts}.png");
 
-       await File.WriteAllTextAsync(csvPath,
-           "Location,Users\n" +
-           string.Join("\n", data.Select(d => $"{d.Location},{d.Users}")));
+    await File.WriteAllTextAsync(csvPath,
+        "OperationType,AverageTimeSeconds\n" +
+        string.Join("\n", data.Select(d =>
+            $"{d.OperationType},{d.AverageTimeSeconds}")));
 
-       var script = Path.Combine(_scriptDir, "generate_users_by_location_chart.py");
-       var psi = new ProcessStartInfo("python",
-           $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-       { RedirectStandardError = true, UseShellExecute = false };
+    var script = Path.Combine(_scriptDir, "generate_slowest_ops_chart.py");
+    var psi = new ProcessStartInfo("python",
+        $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    { RedirectStandardError = true, UseShellExecute = false };
 
-       using var proc = Process.Start(psi)
-                     ?? throw new InvalidOperationException("Could not start Python");
-       var err = await proc.StandardError.ReadToEndAsync();
-       await proc.WaitForExitAsync();
-       if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Could not start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
 
-       return $"/charts/{Path.GetFileName(pngPath)}";
-   }
-   ```
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+```
 
-6. **Python script** (`generate_users_by_location_chart.py`)
+**6. Python script** (`generate_slowest_ops_chart.py`)
 
-   ```python
-   import sys, pandas as pd, matplotlib.pyplot as plt
-   def main(inp,outp):
-       df = pd.read_csv(inp)
-       fig, ax = plt.subplots(figsize=(10,6))
-       if df.empty:
-           ax.text(0.5,0.5,'No data to display',ha='center',va='center'); ax.axis('off')
-       else:
-           ax.bar(df['Location'], df['Users'])
-           for i, v in enumerate(df['Users']):
-               ax.text(i, v, str(v), ha='center', va='bottom')
-           plt.xticks(rotation=45, ha='right'); plt.tight_layout()
-       plt.savefig(outp)
-   if __name__=='__main__':
-       if len(sys.argv)!=3: sys.exit(1)
-       main(sys.argv[1],sys.argv[2])
-   ```
+```python
+import sys, pandas as pd, matplotlib.pyplot as plt
 
-7. **ChartUpdaterWorker.cs**
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    fig, ax = plt.subplots(figsize=(10,6))
+    if df.empty:
+        ax.text(0.5,0.5,'No data to display',ha='center',va='center',fontsize=14)
+        ax.axis('off')
+    else:
+        ax.bar(df['OperationType'], df['AverageTimeSeconds'])
+        for i, v in enumerate(df['AverageTimeSeconds']):
+            ax.text(i, v, str(v), ha='center', va='bottom')
+        plt.xticks(rotation=45, ha='right')
+        plt.ylabel('Average time (s)')
+        plt.tight_layout()
+    plt.savefig(outp)
 
-   ```csharp
-   // ----------------------------------------------------------------
-   // Active Users per Location (Last Month)
-   // ----------------------------------------------------------------
-   _log.LogInformation("=== Starting active-users-by-location update at {Time} ===", DateTime.UtcNow);
-   var locData = await oracle.GetActiveUsersByLocationAsync(DateTime.UtcNow.AddDays(-30));
-   var locUrl  = await generator.GenerateActiveUsersByLocationChartAsync(locData);
-   metadata["active_users_by_location_last_month"] = new { ImageUrl = locUrl, LastUpdated = DateTime.UtcNow };
-   _log.LogInformation("Updated Chart and Meta data -> {Url}", locUrl);
-   ```
+if __name__=='__main__':
+    if len(sys.argv)!=3: sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
 
-8. **Razor**
+**7. ChartUpdaterWorker.cs**
 
-   ```razor
-   <GraphBox GraphID="active_users_by_location_last_month"
-             Title="Active Users per Location (Last Month)" />
-   ```
+```csharp
+// ----------------------------------------------------------------
+// Slowest User Operations (Last 7 Days)
+// ----------------------------------------------------------------
+_log.LogInformation("=== Starting slowest-user-ops update at {Time} ===", DateTime.UtcNow);
+var ops = await oracle.GetSlowestUserOperationsAsync(DateTime.UtcNow.AddDays(-7));
+var opsUrl = await generator.GenerateSlowestUserOperationsChartAsync(ops);
+metadata["slowest_user_operations"] = new { ImageUrl = opsUrl, LastUpdated = DateTime.UtcNow };
+_log.LogInformation("Updated Chart and Meta data -> {Url}", opsUrl);
+```
+
+**8. Razor**
+
+```razor
+<GraphBox GraphID="slowest_user_operations"
+          Title="Slowest user operations in last 7 days (group by type)" />
+```
+
+---
+
+## 3️⃣ Tools Used (Last Month)
+
+**1. Model**
+
+```csharp
+public class ToolUsage
+{
+    public string Tool       { get; set; }
+    public int    TimesUsed  { get; set; }
+}
+```
+
+**2. IOracleDataService**
+
+```csharp
+Task<IEnumerable<ToolUsage>> GetToolUsageAsync(DateTime since);
+```
+
+**3. OracleDataService**
+
+```csharp
+public async Task<IEnumerable<ToolUsage>> GetToolUsageAsync(DateTime since)
+{
+    var list = new List<ToolUsage>();
+    await using var conn = new OracleConnection(_connectionString);
+    await conn.OpenAsync();
+    const string sql = @"
+SELECT r.feature AS Tool,
+       COUNT(1)    AS TimesUsed
+  FROM star_action_audit r
+ WHERE r.mod_dt > :since
+   AND r.feature_type = 'TOOLS'
+ GROUP BY r.feature
+ ORDER BY TimesUsed DESC";
+    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
+    cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
+    await using var rdr = await cmd.ExecuteReaderAsync();
+    while (await rdr.ReadAsync())
+        list.Add(new ToolUsage {
+            Tool      = rdr.GetString(rdr.GetOrdinal("Tool")),
+            TimesUsed = rdr.GetInt32 (rdr.GetOrdinal("TimesUsed"))
+        });
+    return list;
+}
+```
+
+**4. IChartGeneratorService**
+
+```csharp
+Task<string> GenerateToolUsageChartAsync(IEnumerable<ToolUsage> data);
+```
+
+**5. ChartGeneratorService**
+
+```csharp
+public async Task<string> GenerateToolUsageChartAsync(IEnumerable<ToolUsage> data)
+{
+    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir,   $"tool_usage_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"tool_usage_{ts}.png");
+
+    await File.WriteAllTextAsync(csvPath,
+        "Tool,TimesUsed\n" +
+        string.Join("\n", data.Select(d =>
+            $"{d.Tool},{d.TimesUsed}")));
+
+    var script = Path.Combine(_scriptDir, "generate_tool_usage_chart.py");
+    var psi = new ProcessStartInfo("python",
+        $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+    { RedirectStandardError = true, UseShellExecute = false };
+
+    using var proc = Process.Start(psi)
+                  ?? throw new InvalidOperationException("Could not start Python");
+    var err = await proc.StandardError.ReadToEndAsync();
+    await proc.WaitForExitAsync();
+    if (!string.IsNullOrWhiteSpace(err)) _log.LogError(err);
+
+    return $"/charts/{Path.GetFileName(pngPath)}";
+}
+```
+
+**6. Python script** (`generate_tool_usage_chart.py`)
+
+```python
+import sys, pandas as pd, matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp)
+    fig, ax = plt.subplots(figsize=(10,6))
+    if df.empty:
+        ax.text(0.5,0.5,'No data to display',ha='center',va='center',fontsize=14)
+        ax.axis('off')
+    else:
+        ax.bar(df['Tool'], df['TimesUsed'])
+        for i, v in enumerate(df['TimesUsed']):
+            ax.text(i, v, str(v), ha='center', va='bottom')
+        plt.xticks(rotation=45, ha='right')
+        plt.ylabel('Times used')
+        plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__=='__main__':
+    if len(sys.argv)!=3: sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+**7. ChartUpdaterWorker.cs**
+
+```csharp
+// ----------------------------------------------------------------
+// Tools Used Last Month
+// ----------------------------------------------------------------
+_log.LogInformation("=== Starting tool-usage update at {Time} ===", DateTime.UtcNow);
+var tools = await oracle.GetToolUsageAsync(DateTime.UtcNow.AddDays(-30));
+var toolsUrl = await generator.GenerateToolUsageChartAsync(tools);
+metadata["tools_usage_last_month"] = new { ImageUrl = toolsUrl, LastUpdated = DateTime.UtcNow };
+_log.LogInformation("Updated Chart and Meta data -> {Url}", toolsUrl);
+```
+
+**8. Razor**
+
+```razor
+<GraphBox GraphID="tools_usage_last_month"
+          Title="Tools used last month" />
+```
