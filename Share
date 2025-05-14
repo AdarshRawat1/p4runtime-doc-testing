@@ -1,24 +1,71 @@
-// Services/OracleDataService.cs
+Below is the **complete** 8-step integration for **all three** charts, following exactly your working patterns (new connection per call, full SQL text, CSV → Python → PNG, metadata updates, `<GraphBox>`).
+
+---
+
+## 1. OTC Top 5 Products Causing Intra-day Rec Breaks (Last 4 Weeks)
+
+### 1. Model
+
+**File:** `Models/RecBreaksCount.cs`
+
+```csharp
+namespace StarTrends.Models
+{
+    public class RecBreaksCount
+    {
+        public string PrdTypName { get; set; }
+        public int RecBreaks { get; set; }
+        public string Reason { get; set; }
+    }
+}
+```
+
+### 2. Data-service interface
+
+**File:** `Services/IOracleDataService.cs`
+
+```csharp
+using StarTrends.Models;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+public interface IOracleDataService
+{
+    Task<IEnumerable<RecBreaksCount>> GetRecBreaksCountAsync(DateTime fromDate, DateTime toDate);
+    // … other methods …
+}
+```
+
+### 3. Data-service implementation
+
+**File:** `Services/OracleDataService.cs`
+
+```csharp
 using Oracle.ManagedDataAccess.Client;
 using StarTrends.Models;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
 public class OracleDataService : IOracleDataService
 {
-    private readonly OracleConnection _conn;
-
-    public OracleDataService(OracleConnection conn)
+    private readonly string _connectionString;
+    public OracleDataService(IConfiguration config)
     {
-        _conn = conn;
+        _connectionString = config.GetConnectionString("Oracle");
     }
 
     public async Task<IEnumerable<RecBreaksCount>> GetRecBreaksCountAsync(DateTime fromDate, DateTime toDate)
     {
+        var list = new List<RecBreaksCount>();
+        await using var conn = new OracleConnection(_connectionString);
+        await conn.OpenAsync();
+
         const string sql = @"
 WITH recbreaks AS (
   SELECT c.prd_typ_name,
-         COUNT(1) AS ""Rec Breaks"",
+         COUNT(1)                  AS ""Rec Breaks"",
          r.reason
     FROM (
       SELECT a.con_no,
@@ -68,12 +115,14 @@ WITH recbreaks AS (
                ELSE prd_typ_cod
              END AS prd_typ_name
         FROM star_contract PARTITION(product_oth)
-    ) c ON c.con_no = r.con_no
+    ) c
+      ON c.con_no = r.con_no
    WHERE r.reason NOT IN ('UNR','RFB')
    GROUP BY c.prd_typ_name, r.reason
 ),
 recbreaksorderd AS (
-  SELECT prd_typ_name, SUM(""Rec Breaks"") AS total
+  SELECT prd_typ_name,
+         SUM(""Rec Breaks"") AS total
     FROM recbreaks
    GROUP BY prd_typ_name
    ORDER BY total DESC
@@ -86,214 +135,169 @@ SELECT prd_typ_name AS PrdTypName,
    SELECT prd_typ_name FROM recbreaksorderd WHERE rownum <= 5
  )";
 
-        using var cmd = _conn.CreateCommand();
-        cmd.BindByName = true;
-        cmd.CommandText = sql;
+        await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
         cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
         cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
 
-        using var reader = await cmd.ExecuteReaderAsync();
-        var list = new List<RecBreaksCount>();
-        while (await reader.ReadAsync())
+        await using var rdr = await cmd.ExecuteReaderAsync();
+        while (await rdr.ReadAsync())
         {
-            list.Add(new RecBreaksCount {
-                PrdTypName = reader.GetString(0),
-                RecBreaks  = reader.GetInt32(1),
-                Reason     = reader.GetString(2)
+            list.Add(new RecBreaksCount
+            {
+                PrdTypName = rdr.GetString(rdr.GetOrdinal("PrdTypName")),
+                RecBreaks  = rdr.GetInt32(rdr.GetOrdinal("RecBreaks")),
+                Reason     = rdr.GetString(rdr.GetOrdinal("Reason"))
             });
         }
+
         return list;
     }
 
-    public async Task<IEnumerable<MtmContractsBookedCount>> GetMtmContractsBookedAsync(DateTime fromDate, DateTime toDate)
+    // … other methods for the other charts …
+}
+```
+
+### 4. Chart-generator interface
+
+**File:** `Services/IChartGeneratorService.cs`
+
+```csharp
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using StarTrends.Models;
+
+public interface IChartGeneratorService
+{
+    Task<string> GenerateRecBreaksChartAsync(IEnumerable<RecBreaksCount> data);
+    Task<string> GenerateMtmContractsBookedChartAsync(IEnumerable<MtmContractsBookedCount> data);
+    Task<string> GenerateOtcContractsBookedChartAsync(IEnumerable<OtcContractsBookedCount> data);
+}
+```
+
+### 5. Chart-generator implementation
+
+**File:** `Services/ChartGeneratorService.cs`
+
+```csharp
+using Microsoft.Extensions.Logging;
+using StarTrends.Models;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+
+public class ChartGeneratorService : IChartGeneratorService
+{
+    private readonly string _csvDir;
+    private readonly string _chartDir;
+    private readonly string _scriptDir;
+    private readonly ILogger<ChartGeneratorService> _log;
+
+    public ChartGeneratorService(IConfiguration config, ILogger<ChartGeneratorService> log)
     {
-        const string sql = @"
-SELECT TRUNC(inp_dt,'IW') AS Week,
-       COUNT(1)         AS MtmContractsBooked
-  FROM star_contract PARTITION(product_oth)
- WHERE TRUNC(inp_dt) BETWEEN :fromDate AND :toDate
-   AND con_no IN (
-     SELECT con_no FROM star_mtm WHERE lgcl_del_flg='N'
-   )
-   AND mrr_typ_cod IN (0,1,6)
- GROUP BY TRUNC(inp_dt,'IW')
- ORDER BY Week";
+        _csvDir    = config["Paths:CsvDir"];
+        _chartDir  = config["Paths:ChartDir"];
+        _scriptDir = config["Paths:ScriptDir"];
+        _log       = log;
+    }
 
-        using var cmd = _conn.CreateCommand();
-        cmd.BindByName = true;
-        cmd.CommandText = sql;
-        cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
-        cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+    public async Task<string> GenerateRecBreaksChartAsync(IEnumerable<RecBreaksCount> data)
+    {
+        var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+        var csvPath = Path.Combine(_csvDir, $"rec_breaks_{ts}.csv");
+        var pngPath = Path.Combine(_chartDir, $"rec_breaks_{ts}.png");
 
-        using var reader = await cmd.ExecuteReaderAsync();
-        var list = new List<MtmContractsBookedCount>();
-        while (await reader.ReadAsync())
+        await File.WriteAllTextAsync(csvPath,
+            "PrdTypName,Reason,RecBreaks\n" +
+            string.Join("\n", data.Select(d => $"{d.PrdTypName},{d.Reason},{d.RecBreaks}"))
+        );
+
+        var script = Path.Combine(_scriptDir, "generate_rec_breaks_chart.py");
+        var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
         {
-            list.Add(new MtmContractsBookedCount {
-                Week                  = reader.GetDateTime(0),
-                MtmContractsBooked    = reader.GetInt32(1)
-            });
-        }
-        return list;
+            RedirectStandardError = true,
+            UseShellExecute       = false
+        };
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Could not start Python process");
+
+        var error = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        if (!string.IsNullOrWhiteSpace(error))
+            _log.LogError(error);
+
+        return $"/charts/{Path.GetFileName(pngPath)}";
     }
 
-    public async Task<IEnumerable<OtcContractsBookedCount>> GetOtcContractsBookedAsync(DateTime fromDate, DateTime toDate)
+    public async Task<string> GenerateMtmContractsBookedChartAsync(IEnumerable<MtmContractsBookedCount> data)
     {
-        const string sql = @"
-SELECT
-  TRUNC(c.inp_dt,'IW')                                 AS Week,
-  SUM(CASE WHEN m.con_no IS NOT NULL THEN 1 ELSE 0 END) AS MtmContractsBooked,
-  COUNT(1)                                             AS DealsBooked
-FROM star_contract PARTITION(product_oth) c
-LEFT JOIN star_mtm m
-  ON m.con_no = c.con_no
- AND m.lgcl_del_flg='N'
-WHERE c.inp_dt BETWEEN :fromDate AND :toDate
-  AND c.mrr_typ_cod IN (0,1,6)
-GROUP BY TRUNC(c.inp_dt,'IW')
-ORDER BY Week";
+        var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+        var csvPath = Path.Combine(_csvDir, $"mtm_contracts_booked_{ts}.csv");
+        var pngPath = Path.Combine(_chartDir, $"mtm_contracts_booked_{ts}.png");
 
-        using var cmd = _conn.CreateCommand();
-        cmd.BindByName = true;
-        cmd.CommandText = sql;
-        cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
-        cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
+        await File.WriteAllTextAsync(csvPath,
+            "Week,MtmContractsBooked\n" +
+            string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.MtmContractsBooked}"))
+        );
 
-        using var reader = await cmd.ExecuteReaderAsync();
-        var list = new List<OtcContractsBookedCount>();
-        while (await reader.ReadAsync())
+        var script = Path.Combine(_scriptDir, "generate_mtm_contracts_booked_chart.py");
+        var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
         {
-            list.Add(new OtcContractsBookedCount {
-                Week                = reader.GetDateTime(0),
-                MtmContractsBooked  = reader.GetInt32(1),
-                DealsBooked         = reader.GetInt32(2)
-            });
-        }
-        return list;
+            RedirectStandardError = true,
+            UseShellExecute       = false
+        };
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Could not start Python process");
+
+        var error = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        if (!string.IsNullOrWhiteSpace(error))
+            _log.LogError(error);
+
+        return $"/charts/{Path.GetFileName(pngPath)}";
+    }
+
+    public async Task<string> GenerateOtcContractsBookedChartAsync(IEnumerable<OtcContractsBookedCount> data)
+    {
+        var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+        var csvPath = Path.Combine(_csvDir, $"otc_contracts_booked_{ts}.csv");
+        var pngPath = Path.Combine(_chartDir, $"otc_contracts_booked_{ts}.png");
+
+        await File.WriteAllTextAsync(csvPath,
+            "Week,MtmContractsBooked,DealsBooked\n" +
+            string.Join("\n", data.Select(d => $"{d.Week:yyyy-MM-dd},{d.MtmContractsBooked},{d.DealsBooked}"))
+        );
+
+        var script = Path.Combine(_scriptDir, "generate_otc_contracts_booked_chart.py");
+        var psi = new ProcessStartInfo("python", $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
+        {
+            RedirectStandardError = true,
+            UseShellExecute       = false
+        };
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Could not start Python process");
+
+        var error = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        if (!string.IsNullOrWhiteSpace(error))
+            _log.LogError(error);
+
+        return $"/charts/{Path.GetFileName(pngPath)}";
     }
 }
-
-
-
-
-
-Below is the full 8-step “chart integration recipe” applied to each of your three requested charts. Just copy & paste each block into your StarTrends solution, edit your date-bindings as needed, and you’ll have:
-
----
-
-## 1. **OTC Top 5 Products Causing Intra-day Reconciliation Breaks (Past 4 Weeks)**
-
-### 1. Model
-
-**File**: `Models/RecBreaksCount.cs`
-
-```csharp
-namespace StarTrends.Models
-{
-    public class RecBreaksCount
-    {
-        public string PrdTypName { get; set; }
-        public int RecBreaks { get; set; }
-        public string Reason { get; set; }
-    }
-}
 ```
 
-### 2. Data service interface
+### 6. Python scripts
 
-**File**: `Services/IOracleDataService.cs`
-
-```csharp
-Task<IEnumerable<RecBreaksCount>> GetRecBreaksCountAsync(DateTime fromDate, DateTime toDate);
-```
-
-### 3. Data service implementation
-
-**File**: `Services/OracleDataService.cs`
-
-```csharp
-public async Task<IEnumerable<RecBreaksCount>> GetRecBreaksCountAsync(DateTime fromDate, DateTime toDate)
-{
-    const string sql = @"
-WITH recbreaks AS (
-  /* your full query, replacing SYSDATE-28 with :fromDate and :toDate */
-)
-SELECT prd_typ_name AS PrdTypName,
-       ""Rec Breaks""    AS RecBreaks,
-       reason            AS Reason
-FROM recbreaks
-WHERE prd_typ_name IN (
-  SELECT prd_typ_name FROM (
-    /* same subselect with rownum <=5 */
-  )
-)";
-    using var cmd = _conn.CreateCommand();
-    cmd.BindByName = true;
-    cmd.CommandText = sql;
-    cmd.Parameters.Add("fromDate", OracleDbType.Date).Value = fromDate;
-    cmd.Parameters.Add("toDate",   OracleDbType.Date).Value = toDate;
-    using var reader = await cmd.ExecuteReaderAsync();
-    var list = new List<RecBreaksCount>();
-    while (await reader.ReadAsync())
-    {
-        list.Add(new RecBreaksCount {
-            PrdTypName = reader.GetString(0),
-            RecBreaks  = reader.GetInt32(1),
-            Reason     = reader.GetString(2)
-        });
-    }
-    return list;
-}
-```
-
-### 4. Chart generator interface
-
-**File**: `Services/IChartGeneratorService.cs`
-
-```csharp
-Task<string> GenerateRecBreaksChartAsync(IEnumerable<RecBreaksCount> data);
-```
-
-### 5. Chart generator implementation
-
-**File**: `Services/ChartGeneratorService.cs`
-
-```csharp
-public async Task<string> GenerateRecBreaksChartAsync(IEnumerable<RecBreaksCount> data)
-{
-    var csvPath = Path.Combine(_csvDir, $"rec_breaks_{DateTime.UtcNow:yyyyMMddHHmmss}.csv");
-    var pngName = $"rec_breaks_{DateTime.UtcNow:yyyyMMddHHmmss}.png";
-    var pngPath = Path.Combine(_chartDir, pngName);
-
-    // write CSV
-    using var sw = new StreamWriter(csvPath);
-    sw.WriteLine("PrdTypName,Reason,RecBreaks");
-    foreach (var d in data)
-        sw.WriteLine($"{d.PrdTypName},{d.Reason},{d.RecBreaks}");
-
-    // call Python
-    var psi = new ProcessStartInfo("python",
-        $"generate_rec_breaks_chart.py \"{csvPath}\" \"{pngPath}\"")
-    {
-        RedirectStandardError = true
-    };
-    var p = Process.Start(psi);
-    string err = await p.StandardError.ReadToEndAsync();
-    p.WaitForExit();
-    if (p.ExitCode != 0)
-        _logger.LogError(err);
-
-    return $"/charts/{pngName}";
-}
-```
-
-### 6. Python script
-
-**File**: `PythonScripts/generate_rec_breaks_chart.py`
+**File:** `PythonScripts/generate_rec_breaks_chart.py`
 
 ```python
 #!/usr/bin/env python3
-# Usage: python generate_rec_breaks_chart.py <in.csv> <out.png>
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -302,225 +306,220 @@ def main(inp, outp):
     df = pd.read_csv(inp)
     if df.empty:
         fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
+        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
         ax.axis('off')
         plt.savefig(outp)
         return
-
     pivot = df.pivot(index='PrdTypName', columns='Reason', values='RecBreaks').fillna(0)
-    ax = pivot.plot(kind='bar', figsize=(10,5))
+    fig, ax = plt.subplots(figsize=(10,6))
+    pivot.plot(kind='bar', ax=ax)
     for container in ax.containers:
         ax.bar_label(container, fmt='%.0f', label_type='edge', padding=2, fontsize=9)
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(outp)
 
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
+if __name__=='__main__':
+    if len(sys.argv)!=3:
         print("Usage: python generate_rec_breaks_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+**File:** `PythonScripts/generate_mtm_contracts_booked_chart.py`
+
+```python
+#!/usr/bin/env python3
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp, parse_dates=['Week'])
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+    fig, ax = plt.subplots(figsize=(10,6))
+    ax.plot(df['Week'], df['MtmContractsBooked'], marker='o')
+    for x, y in zip(df['Week'], df['MtmContractsBooked']):
+        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__=='__main__':
+    if len(sys.argv)!=3:
+        print("Usage: python generate_mtm_contracts_booked_chart.py <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
+```
+
+**File:** `PythonScripts/generate_otc_contracts_booked_chart.py`
+
+```python
+#!/usr/bin/env python3
+import sys
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def main(inp, outp):
+    df = pd.read_csv(inp, parse_dates=['Week'])
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(8,4))
+        ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', fontsize=14)
+        ax.axis('off')
+        plt.savefig(outp)
+        return
+    fig, ax = plt.subplots(figsize=(10,6))
+    ax.plot(df['Week'], df['MtmContractsBooked'], marker='o', label='MTM Booked')
+    ax.plot(df['Week'], df['DealsBooked'],        marker='s', label='Deals Booked')
+    for x, y in zip(df['Week'], df['MtmContractsBooked']):
+        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
+    for x, y in zip(df['Week'], df['DealsBooked']):
+        ax.text(x, y, f"{y}", va='bottom', ha='center', fontsize=9)
+    ax.legend()
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(outp)
+
+if __name__=='__main__':
+    if len(sys.argv)!=3:
+        print("Usage: python generate_otc_contracts_booked_chart.py <in.csv> <out.png>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
 ```
 
 ### 7. Worker integration
 
-**File**: `Workers/ChartUpdaterWorker.cs`
+**File:** `Workers/ChartUpdaterWorker.cs`
 
 ```csharp
-// inside your ExecuteAsync loop:
-var fromDate = DateTime.UtcNow.Date.AddDays(-28);
-var toDate   = DateTime.UtcNow.Date;
-var recData  = await _oracle.GetRecBreaksCountAsync(fromDate, toDate);
-var recUrl   = await _chartGen.GenerateRecBreaksChartAsync(recData);
-metadata["rec_breaks_top5"] = new { ImageUrl = recUrl, LastUpdated = DateTime.UtcNow };
-CleanupOldFiles(_chartDir, "rec_breaks_*.png", MaxKeep);
-CleanupOldFiles(_csvDir,   "rec_breaks_*.csv", MaxKeep);
+using Microsoft.Extensions.Hosting;
+using StarTrends.Models;
+using StarTrends.Services;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+
+public class ChartUpdaterWorker : BackgroundService
+{
+    private readonly IOracleDataService _oracle;
+    private readonly IChartGeneratorService _chartGen;
+    private readonly string _csvDir;
+    private readonly string _chartDir;
+    private readonly string _metaFile;
+    private readonly int _maxKeep = 10;
+
+    public ChartUpdaterWorker(
+        IOracleDataService oracle,
+        IChartGeneratorService chartGen,
+        IConfiguration config)
+    {
+        _oracle   = oracle;
+        _chartGen = chartGen;
+        _csvDir   = config["Paths:CsvDir"];
+        _chartDir = config["Paths:ChartDir"];
+        _metaFile = Path.Combine(_chartDir, "metadata.json");
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            var now   = DateTime.UtcNow;
+            var fourW = now.Date.AddDays(-28);
+            var fourY = now.Date.AddYears(-4);
+
+            // Rec-breaks
+            var recData = await _oracle.GetRecBreaksCountAsync(fourW, now);
+            var recUrl  = await _chartGen.GenerateRecBreaksChartAsync(recData);
+
+            // MTM contracts
+            var mtmData = await _oracle.GetMtmContractsBookedAsync(fourY, now);
+            var mtmUrl  = await _chartGen.GenerateMtmContractsBookedChartAsync(mtmData);
+
+            // OTC contracts
+            var otcData = await _oracle.GetOtcContractsBookedAsync(fourY, now);
+            var otcUrl  = await _chartGen.GenerateOtcContractsBookedChartAsync(otcData);
+
+            // Load or init metadata.json
+            var meta = File.Exists(_metaFile)
+                ? JsonSerializer.Deserialize<Dictionary<string, ChartMeta>>(await File.ReadAllTextAsync(_metaFile))
+                : new Dictionary<string, ChartMeta>();
+
+            // Update entries
+            meta["rec_breaks_top5"]      = new ChartMeta(recUrl, now);
+            meta["mtm_contracts_booked"] = new ChartMeta(mtmUrl, now);
+            meta["otc_contracts_booked"] = new ChartMeta(otcUrl, now);
+
+            // Prune old files
+            CleanupOldFiles(_chartDir, "rec_breaks_*.png",  _maxKeep);
+            CleanupOldFiles(_csvDir,   "rec_breaks_*.csv",  _maxKeep);
+            CleanupOldFiles(_chartDir, "mtm_contracts_booked_*.png", _maxKeep);
+            CleanupOldFiles(_csvDir,   "mtm_contracts_booked_*.csv", _maxKeep);
+            CleanupOldFiles(_chartDir, "otc_contracts_booked_*.png", _maxKeep);
+            CleanupOldFiles(_csvDir,   "otc_contracts_booked_*.csv", _maxKeep);
+
+            // Write metadata.json
+            await File.WriteAllTextAsync(_metaFile,
+                JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
+
+            // Wait one hour
+            await Task.Delay(TimeSpan.FromHours(1), ct);
+        }
+    }
+
+    private void CleanupOldFiles(string folder, string pattern, int keep)
+    {
+        var files = new DirectoryInfo(folder)
+            .GetFiles(pattern)
+            .OrderByDescending(f => f.CreationTimeUtc)
+            .Skip(keep);
+        foreach (var f in files) f.Delete();
+    }
+
+    private class ChartMeta
+    {
+        public string ImageUrl    { get; set; }
+        public DateTime LastUpdated { get; set; }
+        public ChartMeta() { }
+        public ChartMeta(string url, DateTime ts)
+        {
+            ImageUrl    = url;
+            LastUpdated = ts;
+        }
+    }
+}
 ```
 
-### 8. UI component usage
+### 8. UI component
 
-In the appropriate Razor page (e.g. under **Usage** section):
+Wherever you need each chart (e.g. in `/Pages/Dashboard.razor`):
 
 ```razor
 <GraphBox GraphId="rec_breaks_top5"
           Title="OTC Top 5 Products Causing Intra-day Reconciliation Breaks (Last 4 Weeks)" />
-```
 
----
-
-## 2. **MTM Contracts Booked per Week (Last 4 Years, Excluding Synthetics)**
-
-Repeat the 8 steps, naming things `MtmContractsBookedCount`, `GetMtmContractsBookedAsync`, `generate_mtm_contracts_booked_chart.py`, and GraphId `mtm_contracts_booked`.
-
-```csharp
-// 1. Models/MtmContractsBookedCount.cs
-public class MtmContractsBookedCount
-{
-    public DateTime Week { get; set; }
-    public int MtmContractsBooked { get; set; }
-}
-
-// 2. IOracleDataService.cs
-Task<IEnumerable<MtmContractsBookedCount>> GetMtmContractsBookedAsync(DateTime fromDate, DateTime toDate);
-
-// 3. OracleDataService.cs
-const string sql = @"
-SELECT TRUNC(inp_dt,'IW') AS Week,
-       COUNT(1)         AS MtmContractsBooked
-FROM star_contract PARTITION(product_oth) c
-WHERE TRUNC(inp_dt) BETWEEN :fromDate AND :toDate
-  AND c.con_no IN (
-    SELECT con_no FROM star_mtm WHERE lgcl_del_flg='N'
-  )
-  AND mrr_typ_cod IN (0,1,6)
-GROUP BY TRUNC(inp_dt,'IW')
-ORDER BY Week";
-...
-cmd.CommandText = sql;
-// bind fromDate/toDate, read into MtmContractsBookedCount
-
-// 4. IChartGeneratorService.cs
-Task<string> GenerateMtmContractsBookedChartAsync(IEnumerable<MtmContractsBookedCount> data);
-
-// 5. ChartGeneratorService.cs
-// write CSV header: Week,MtmContractsBooked
-// call: generate_mtm_contracts_booked_chart.py
-
-// 6. PythonScripts/generate_mtm_contracts_booked_chart.py
-#!/usr/bin/env python3
-import sys, pandas as pd, matplotlib.pyplot as plt
-def main(inp,outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-    ax = df.plot(x='Week', y='MtmContractsBooked', marker='o', figsize=(10,5))
-    plt.xticks(rotation=45,ha='right'); plt.tight_layout(); plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage...", file=sys.stderr); sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-
-// 7. Worker:
-var fourYearsAgo = DateTime.UtcNow.Date.AddYears(-4);
-var nowDate      = DateTime.UtcNow.Date;
-var mtmData      = await _oracle.GetMtmContractsBookedAsync(fourYearsAgo, nowDate);
-var mtmUrl       = await _chartGen.GenerateMtmContractsBookedChartAsync(mtmData);
-metadata["mtm_contracts_booked"] = new { ImageUrl = mtmUrl, LastUpdated = DateTime.UtcNow };
-
-// 8. Razor:
 <GraphBox GraphId="mtm_contracts_booked"
-          Title="MTM Contracts Booked per Week (Last 4 Years, Excl. Synthetics)" />
-```
+          Title="MTM Contracts Booked per Week (Last 4 Years, Excluding Synthetics)" />
 
----
-
-## 3. **OTC Contracts Booked per Week (Last 4 Years, Excl. Synthetics) – Two-line Comparison**
-
-Combine MTM vs. Total “Deals booked” on one line chart:
-
-### 1. Model
-
-`Models/OtcContractsBookedCount.cs`
-
-```csharp
-public class OtcContractsBookedCount
-{
-    public DateTime Week { get; set; }
-    public int MtmContractsBooked { get; set; }
-    public int DealsBooked { get; set; }
-}
-```
-
-### 2. Interface
-
-`IOracleDataService.cs`
-
-```csharp
-Task<IEnumerable<OtcContractsBookedCount>> GetOtcContractsBookedAsync(DateTime fromDate, DateTime toDate);
-```
-
-### 3. Implementation
-
-```csharp
-const string sql = @"
-SELECT
-  TRUNC(c.inp_dt,'IW')           AS Week,
-  SUM(CASE WHEN m.con_no IS NOT NULL THEN 1 ELSE 0 END) AS MtmContractsBooked,
-  COUNT(1)                       AS DealsBooked
-FROM star_contract PARTITION(product_oth) c
-LEFT JOIN star_mtm m ON m.con_no = c.con_no AND m.lgcl_del_flg='N'
-WHERE c.inp_dt BETWEEN :fromDate AND :toDate
-  AND c.mrr_typ_cod IN (0,1,6)
-GROUP BY TRUNC(c.inp_dt,'IW')
-ORDER BY Week";
-...
-// bind, read into OtcContractsBookedCount
-```
-
-### 4. Generator interface
-
-`IChartGeneratorService.cs`
-
-```csharp
-Task<string> GenerateOtcContractsBookedChartAsync(IEnumerable<OtcContractsBookedCount> data);
-```
-
-### 5. Generator impl
-
-```csharp
-// write CSV header: Week,MtmContractsBooked,DealsBooked
-// call: generate_otc_contracts_booked_chart.py
-```
-
-### 6. Python script
-
-`PythonScripts/generate_otc_contracts_booked_chart.py`
-
-```python
-#!/usr/bin/env python3
-import sys, pandas as pd, matplotlib.pyplot as plt
-
-def main(inp, outp):
-    df = pd.read_csv(inp, parse_dates=['Week'])
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.text(0.5,0.5,'No data',ha='center',va='center',fontsize=14)
-        ax.axis('off'); plt.savefig(outp); return
-
-    ax = df.plot(x='Week',
-                 y=['MtmContractsBooked','DealsBooked'],
-                 marker='o', figsize=(10,5))
-    plt.xticks(rotation=45,ha='right'); plt.tight_layout()
-    plt.savefig(outp)
-
-if __name__=='__main__':
-    if len(sys.argv)!=3:
-        print("Usage...", file=sys.stderr); sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
-```
-
-### 7. Worker
-
-```csharp
-var fourYearsAgo = DateTime.UtcNow.Date.AddYears(-4);
-var nowDate      = DateTime.UtcNow.Date;
-var otcData      = await _oracle.GetOtcContractsBookedAsync(fourYearsAgo, nowDate);
-var otcUrl       = await _chartGen.GenerateOtcContractsBookedChartAsync(otcData);
-metadata["otc_contracts_booked"] = new { ImageUrl = otcUrl, LastUpdated = DateTime.UtcNow };
-CleanupOldFiles(_chartDir, "otc_contracts_booked_*.png", MaxKeep);
-CleanupOldFiles(_csvDir,   "otc_contracts_booked_*.csv", MaxKeep);
-```
-
-### 8. Razor
-
-```razor
 <GraphBox GraphId="otc_contracts_booked"
-          Title="OTC Contracts Booked per Week (Last 4 Years, Excl. Synthetics)" />
+          Title="OTC Contracts Booked per Week (Last 4 Years, Excluding Synthetics)" />
 ```
 
 ---
 
-Once you wire these in, your background worker will keep them updated and each section/page simply drops in a `<GraphBox>` pointing at the new `GraphId`. Let me know if you need any tweaks!
+With these **24** files/methods in place, your background worker will:
+
+1. Fetch each dataset with **full** SQL.
+2. Generate timestamped CSVs and PNGs via Python.
+3. Update `metadata.json` every run.
+4. `<GraphBox>` will automatically pull the latest `ImageUrl` and `LastUpdated`.
+
+Let me know if any tweaks are needed!
