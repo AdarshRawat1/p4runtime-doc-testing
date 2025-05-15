@@ -1,54 +1,54 @@
-Below are the **8 steps** to fully re-implement **Reports used last month (Top 25)** and **Markets used last month (Top 10)** with robust error handling and correct wiring.
+Below are the **8 steps**—with full error handling—for each of the two bar-charts. **GraphIDs** and **Titles** match exactly your names.
 
 ---
 
-## 1️⃣ Reports used last month (Top 25)
+## 1️⃣ Blotters features used last month
 
 ```csharp
 // 1. Model
-public class ReportUsageLastMonth
+public class BlotterFeatureUsageLastMonth
 {
-    public string Report    { get; set; }
-    public int    TimesUsed { get; set; }
+    public string BlotterFeature { get; set; }
+    public int    TimesUsed      { get; set; }
 }
 ```
 
 ```csharp
 // 2. IOracleDataService
-Task<IEnumerable<ReportUsageLastMonth>> GetReportsUsedLastMonthAsync(DateTime since, int topN);
+Task<IEnumerable<BlotterFeatureUsageLastMonth>> GetBlotterFeaturesUsedLastMonthAsync(DateTime since);
 ```
 
 ```csharp
 // 3. OracleDataService
-public async Task<IEnumerable<ReportUsageLastMonth>> GetReportsUsedLastMonthAsync(DateTime since, int topN)
+public async Task<IEnumerable<BlotterFeatureUsageLastMonth>> GetBlotterFeaturesUsedLastMonthAsync(DateTime since)
 {
-    var list = new List<ReportUsageLastMonth>();
+    var list = new List<BlotterFeatureUsageLastMonth>();
     await using var conn = new OracleConnection(_connectionString);
     await conn.OpenAsync();
 
     const string sql = @"
-SELECT Report, TimesUsed
-FROM (
-  SELECT r.feature         AS Report,
-         COUNT(1)           AS TimesUsed
-    FROM star_action_audit r
-   WHERE r.mod_dt > :since
-     AND r.feature_type = 'REPORT'
-   GROUP BY r.feature
-   ORDER BY TimesUsed DESC
-)
-WHERE ROWNUM <= :topN";
+SELECT r.feature           AS BlotterFeature,
+       COUNT(1)             AS TimesUsed
+  FROM star_action_audit r
+ WHERE r.mod_dt > :since
+   AND r.feature_type = 'BLOTTER'
+   AND r.feature <> 'Open trade'
+   AND r.feature NOT LIKE '% - Load'
+   AND r.feature NOT LIKE '% - On startup'
+   AND r.feature NOT LIKE '% - Open'
+   AND r.feature NOT LIKE '% - Open Item'
+ GROUP BY r.feature
+ ORDER BY TimesUsed DESC";
 
     await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-    cmd.Parameters.Add("since", OracleDbType.Date).Value  = since;
-    cmd.Parameters.Add("topN",  OracleDbType.Int32).Value = topN;
+    cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
 
     await using var rdr = await cmd.ExecuteReaderAsync();
     while (await rdr.ReadAsync())
     {
-        list.Add(new ReportUsageLastMonth {
-            Report    = rdr.GetString (rdr.GetOrdinal("Report")),
-            TimesUsed = rdr.GetInt32  (rdr.GetOrdinal("TimesUsed"))
+        list.Add(new BlotterFeatureUsageLastMonth {
+            BlotterFeature = rdr.GetString(rdr.GetOrdinal("BlotterFeature")),
+            TimesUsed      = rdr.GetInt32 (rdr.GetOrdinal("TimesUsed"))
         });
     }
 
@@ -58,22 +58,22 @@ WHERE ROWNUM <= :topN";
 
 ```csharp
 // 4. IChartGeneratorService
-Task<string> GenerateReportsUsedLastMonthChartAsync(IEnumerable<ReportUsageLastMonth> data);
+Task<string> GenerateBlotterFeaturesUsedLastMonthChartAsync(IEnumerable<BlotterFeatureUsageLastMonth> data);
 ```
 
 ```csharp
 // 5. ChartGeneratorService
-public async Task<string> GenerateReportsUsedLastMonthChartAsync(IEnumerable<ReportUsageLastMonth> data)
+public async Task<string> GenerateBlotterFeaturesUsedLastMonthChartAsync(IEnumerable<BlotterFeatureUsageLastMonth> data)
 {
-    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir,   $"reports_used_last_month_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"reports_used_last_month_{ts}.png");
+    var ts      = DateTime.UtcNow:ToString("yyyyMMddHHmmss");
+    var csvPath = Path.Combine(_csvDir,   $"blotter_features_used_last_month_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"blotter_features_used_last_month_{ts}.png");
 
     await File.WriteAllTextAsync(csvPath,
-        "Report,TimesUsed\n" +
-        string.Join("\n", data.Select(d => $"{d.Report},{d.TimesUsed}")));
+        "BlotterFeature,TimesUsed\n" +
+        string.Join("\n", data.Select(d => $"{d.BlotterFeature},{d.TimesUsed}")));
 
-    var script = Path.Combine(_scriptDir, "generate_reports_used_last_month_chart.py");
+    var script = Path.Combine(_scriptDir, "generate_blotter_features_used_last_month_chart.py");
     var psi    = new ProcessStartInfo("python",
                     $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
     {
@@ -85,25 +85,26 @@ public async Task<string> GenerateReportsUsedLastMonthChartAsync(IEnumerable<Rep
                   ?? throw new InvalidOperationException("Could not start Python");
     var err = await proc.StandardError.ReadToEndAsync();
     await proc.WaitForExitAsync();
-    if (!string.IsNullOrWhiteSpace(err)) _log.LogError("Python error: {Err}", err);
+    if (!string.IsNullOrWhiteSpace(err))
+        _log.LogError("Python error: {Err}", err);
 
     return $"/charts/{Path.GetFileName(pngPath)}";
 }
 ```
 
 ```python
-# 6. generate_reports_used_last_month_chart.py
+# 6. generate_blotter_features_used_last_month_chart.py
 import sys, pandas as pd, matplotlib.pyplot as plt
 
 def main(inp, outp):
     df = pd.read_csv(inp)
     fig, ax = plt.subplots(figsize=(10,6))
     if df.empty:
-        ax.text(0.5,0.5,'No data to display', ha='center', va='center', fontsize=14)
+        ax.text(0.5,0.5,'No data to display',ha='center',va='center',fontsize=14)
         ax.axis('off')
     else:
-        ax.bar(df['Report'], df['TimesUsed'])
-        for i, v in enumerate(df['TimesUsed']):
+        ax.bar(df['BlotterFeature'], df['TimesUsed'])
+        for i,v in enumerate(df['TimesUsed']):
             ax.text(i, v, str(v), ha='center', va='bottom')
         plt.xticks(rotation=45, ha='right')
         plt.ylabel('Times used')
@@ -118,79 +119,73 @@ if __name__=='__main__':
 ```csharp
 // 7. ChartUpdaterWorker.cs
 // ----------------------------------------------------------------
-// Reports used last month (Top 25)
+// Blotters features used last month
 // ----------------------------------------------------------------
 try
 {
-    _log.LogInformation("Starting reports_used_last_month at {Time}", DateTime.UtcNow);
-    var data = await oracle.GetReportsUsedLastMonthAsync(DateTime.UtcNow.AddDays(-30), 25);
-    var url  = await generator.GenerateReportsUsedLastMonthChartAsync(data);
-    metadata["reports_used_last_month"] = new { ImageUrl = url, LastUpdated = DateTime.UtcNow };
-    _log.LogInformation("reports_used_last_month updated -> {Url}", url);
+    _log.LogInformation("Starting blotter_features_used_last_month at {Time}", DateTime.UtcNow);
+    var data = await oracle.GetBlotterFeaturesUsedLastMonthAsync(DateTime.UtcNow.AddDays(-30));
+    if (data == null) throw new InvalidOperationException("No data returned");
+    var url = await generator.GenerateBlotterFeaturesUsedLastMonthChartAsync(data);
+    metadata["blotter_features_used_last_month"] = new { ImageUrl = url, LastUpdated = DateTime.UtcNow };
+    _log.LogInformation("blotter_features_used_last_month updated -> {Url}", url);
 }
 catch (Exception ex)
 {
-    _log.LogError(ex, "Failed reports_used_last_month update at {Time}", DateTime.UtcNow);
+    _log.LogError(ex, "Failed blotter_features_used_last_month at {Time}", DateTime.UtcNow);
 }
 ```
 
 ```razor
 @* 8. Razor *@
-<GraphBox GraphID="reports_used_last_month"
-          Title="Reports used last month (Top 25)" />
+<GraphBox GraphID="blotter_features_used_last_month"
+          Title="Blotters features used last month" />
 ```
 
 ---
 
-## 2️⃣ Markets used last month (Top 10)
+## 2️⃣ Static used last month
 
 ```csharp
 // 1. Model
-public class MarketUsageLastMonth
+public class StaticUsageLastMonth
 {
-    public string Report    { get; set; }
-    public int    TimesUsed { get; set; }
+    public string StaticName { get; set; }
+    public int    TimesUsed  { get; set; }
 }
 ```
 
 ```csharp
 // 2. IOracleDataService
-Task<IEnumerable<MarketUsageLastMonth>> GetMarketsUsedLastMonthAsync(DateTime since, int topN);
+Task<IEnumerable<StaticUsageLastMonth>> GetStaticUsedLastMonthAsync(DateTime since);
 ```
 
 ```csharp
 // 3. OracleDataService
-public async Task<IEnumerable<MarketUsageLastMonth>> GetMarketsUsedLastMonthAsync(DateTime since, int topN)
+public async Task<IEnumerable<StaticUsageLastMonth>> GetStaticUsedLastMonthAsync(DateTime since)
 {
-    var list = new List<MarketUsageLastMonth>();
+    var list = new List<StaticUsageLastMonth>();
     await using var conn = new OracleConnection(_connectionString);
     await conn.OpenAsync();
 
     const string sql = @"
-SELECT Report, TimesUsed
-FROM (
-  SELECT UPPER(r.detail)  AS Report,
-         COUNT(1)          AS TimesUsed
-    FROM star_action_audit r
-   WHERE r.mod_dt > :since
-     AND r.feature_type = 'MARKET'
-   GROUP BY UPPER(r.detail)
-   ORDER BY TimesUsed DESC
-)
-WHERE ROWNUM <= :topN";
+SELECT r.feature    AS StaticName,
+       COUNT(1)     AS TimesUsed
+  FROM star_action_audit r
+ WHERE r.mod_dt > :since
+   AND r.feature_type = 'STATIC'
+ GROUP BY r.feature
+ ORDER BY TimesUsed DESC";
 
     await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-    cmd.Parameters.Add("since", OracleDbType.Date).Value  = since;
-    cmd.Parameters.Add("topN",  OracleDbType.Int32).Value = topN;
+    cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
 
     await using var rdr = await cmd.ExecuteReaderAsync();
     while (await rdr.ReadAsync())
-    {
-        list.Add(new MarketUsageLastMonth {
-            Report    = rdr.GetString(rdr.GetOrdinal("Report")),
-            TimesUsed = rdr.GetInt32 (rdr.GetOrdinal("TimesUsed"))
+        list.Add(new StaticUsageLastMonth {
+            StaticName = rdr.GetString(rdr.GetOrdinal("StaticName")),
+            TimesUsed  = rdr.GetInt32 (rdr.GetOrdinal("TimesUsed"))
         });
-    }
 
     return list;
 }
@@ -198,22 +193,22 @@ WHERE ROWNUM <= :topN";
 
 ```csharp
 // 4. IChartGeneratorService
-Task<string> GenerateMarketsUsedLastMonthChartAsync(IEnumerable<MarketUsageLastMonth> data);
+Task<string> GenerateStaticUsedLastMonthChartAsync(IEnumerable<StaticUsageLastMonth> data);
 ```
 
 ```csharp
 // 5. ChartGeneratorService
-public async Task<string> GenerateMarketsUsedLastMonthChartAsync(IEnumerable<MarketUsageLastMonth> data)
+public async Task<string> GenerateStaticUsedLastMonthChartAsync(IEnumerable<StaticUsageLastMonth> data)
 {
     var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir,   $"markets_used_last_month_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"markets_used_last_month_{ts}.png");
+    var csvPath = Path.Combine(_csvDir,   $"static_used_last_month_{ts}.csv");
+    var pngPath = Path.Combine(_chartDir, $"static_used_last_month_{ts}.png");
 
     await File.WriteAllTextAsync(csvPath,
-        "Report,TimesUsed\n" +
-        string.Join("\n", data.Select(d => $"{d.Report},{d.TimesUsed}")));
+        "StaticName,TimesUsed\n" +
+        string.Join("\n", data.Select(d => $"{d.StaticName},{d.TimesUsed}")));
 
-    var script = Path.Combine(_scriptDir, "generate_markets_used_last_month_chart.py");
+    var script = Path.Combine(_scriptDir, "generate_static_used_last_month_chart.py");
     var psi    = new ProcessStartInfo("python",
                     $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
     {
@@ -225,25 +220,26 @@ public async Task<string> GenerateMarketsUsedLastMonthChartAsync(IEnumerable<Mar
                   ?? throw new InvalidOperationException("Could not start Python");
     var err = await proc.StandardError.ReadToEndAsync();
     await proc.WaitForExitAsync();
-    if (!string.IsNullOrWhiteSpace(err)) _log.LogError("Python error: {Err}", err);
+    if (!string.IsNullOrWhiteSpace(err))
+        _log.LogError("Python error: {Err}", err);
 
     return $"/charts/{Path.GetFileName(pngPath)}";
 }
 ```
 
 ```python
-# 6. generate_markets_used_last_month_chart.py
+# 6. generate_static_used_last_month_chart.py
 import sys, pandas as pd, matplotlib.pyplot as plt
 
 def main(inp, outp):
     df = pd.read_csv(inp)
     fig, ax = plt.subplots(figsize=(10,6))
     if df.empty:
-        ax.text(0.5,0.5,'No data to display', ha='center', va='center', fontsize=14)
+        ax.text(0.5,0.5,'No data to display',ha='center',va='center',fontsize=14)
         ax.axis('off')
     else:
-        ax.bar(df['Report'], df['TimesUsed'])
-        for i, v in enumerate(df['TimesUsed']):
+        ax.bar(df['StaticName'], df['TimesUsed'])
+        for i,v in enumerate(df['TimesUsed']):
             ax.text(i, v, str(v), ha='center', va='bottom')
         plt.xticks(rotation=45, ha='right')
         plt.ylabel('Times used')
@@ -258,24 +254,25 @@ if __name__=='__main__':
 ```csharp
 // 7. ChartUpdaterWorker.cs
 // ----------------------------------------------------------------
-// Markets used last month (Top 10)
+// Static used last month
 // ----------------------------------------------------------------
 try
 {
-    _log.LogInformation("Starting markets_used_last_month at {Time}", DateTime.UtcNow);
-    var data = await oracle.GetMarketsUsedLastMonthAsync(DateTime.UtcNow.AddDays(-30), 10);
-    var url  = await generator.GenerateMarketsUsedLastMonthChartAsync(data);
-    metadata["markets_used_last_month"] = new { ImageUrl = url, LastUpdated = DateTime.UtcNow };
-    _log.LogInformation("markets_used_last_month updated -> {Url}", url);
+    _log.LogInformation("Starting static_used_last_month at {Time}", DateTime.UtcNow);
+    var data = await oracle.GetStaticUsedLastMonthAsync(DateTime.UtcNow.AddDays(-30));
+    if (data == null) throw new InvalidOperationException("No data returned");
+    var url = await generator.GenerateStaticUsedLastMonthChartAsync(data);
+    metadata["static_used_last_month"] = new { ImageUrl = url, LastUpdated = DateTime.UtcNow };
+    _log.LogInformation("static_used_last_month updated -> {Url}", url);
 }
 catch (Exception ex)
 {
-    _log.LogError(ex, "Failed markets_used_last_month update at {Time}", DateTime.UtcNow);
+    _log.LogError(ex, "Failed static_used_last_month at {Time}", DateTime.UtcNow);
 }
 ```
 
 ```razor
 @* 8. Razor *@
-<GraphBox GraphID="markets_used_last_month"
-          Title="Markets used last month (Top 10)" />
+<GraphBox GraphID="static_used_last_month"
+          Title="Static used last month" />
 ```
