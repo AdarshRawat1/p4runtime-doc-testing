@@ -1,158 +1,42 @@
-To get both Flex and Classic lines, we need to stop filtering out Classic in SQL and then pivot both series in Python. Here’s the **minimal diff** to fix your “Blotters Flex vs Classic per month all users” pipeline:
-
----
-
-### 1. Update your model
-
-```csharp
-// old: only Month & Pct
-public class BlottersFlexVsClassicPerMonth
-{
-    public DateTime Month { get; set; }
-    public int       Pct   { get; set; }
-}
-
-// new: include Flex value
-public class BlottersFlexVsClassicPerMonth
-{
-    public DateTime Month { get; set; }
-    public string    Flex  { get; set; }
-    public int       Pct   { get; set; }
-}
-```
-
----
-
-### 2. OracleDataService: return both lines
-
-```csharp
-public async Task<IEnumerable<BlottersFlexVsClassicPerMonth>> GetBlottersFlexVsClassicPerMonthAsync(DateTime since)
-{
-    var list = new List<BlottersFlexVsClassicPerMonth>();
-    await using var conn = new OracleConnection(_connectionString);
-    await conn.OpenAsync();
-    
-    const string sql = @"
-WITH x AS (
-  SELECT
-    DECODE(r.feature,
-           'To Do Blotter - Load','Classic',
-           'Flex Blotter - Load','Flex',
-           'Classic')                      AS Flex,
-    TRUNC(r.mod_dt,'MON')               AS Month
-  FROM star_action_audit r
-  JOIN gfit_emp e
-    ON e.nt_login = r.supp_user
-  WHERE r.mod_dt > :since
-    AND r.feature_type = 'BLOTTER'
-    AND r.feature LIKE '% - Load'
-    AND r.feature <> 'To Do Blotter - Load'
-    AND r.detail NOT LIKE 'In Tray%'
-    AND r.detail NOT LIKE 'Pending Blotter%'
-),
-y AS (
-  SELECT
-    Month,
-    Flex,
-    TRUNC(
-      RATIO_TO_REPORT(COUNT(1)) OVER (PARTITION BY Month) * 100
-    )                               AS Pct
-  FROM x
-  GROUP BY Month, Flex
-)
-SELECT Month, Flex, Pct
-FROM y
-ORDER BY Month, Flex";
-
-    await using var cmd = new OracleCommand(sql, conn) { BindByName = true };
-    cmd.Parameters.Add("since", OracleDbType.Date).Value = since;
-
-    await using var rdr = await cmd.ExecuteReaderAsync();
-    while (await rdr.ReadAsync())
-    {
-        list.Add(new BlottersFlexVsClassicPerMonth {
-            Month = rdr.GetDateTime(rdr.GetOrdinal("Month")),
-            Flex  = rdr.GetString  (rdr.GetOrdinal("Flex")),
-            Pct   = rdr.GetInt32   (rdr.GetOrdinal("Pct"))
-        });
-    }
-
-    return list;
-}
-```
-
----
-
-### 3. ChartGeneratorService: write both series
-
-```csharp
-public async Task<string> GenerateBlottersFlexVsClassicPerMonthChartAsync(
-    IEnumerable<BlottersFlexVsClassicPerMonth> data)
-{
-    var ts      = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-    var csvPath = Path.Combine(_csvDir,   $"blotters_flex_classic_{ts}.csv");
-    var pngPath = Path.Combine(_chartDir, $"blotters_flex_classic_{ts}.png");
-
-    await File.WriteAllTextAsync(csvPath,
-        "Month,Flex,Pct\n" +
-        string.Join("\n", data.Select(d =>
-            $"{d.Month:yyyy-MM-dd},{d.Flex},{d.Pct}")));
-
-    var script = Path.Combine(_scriptDir,
-        "generate_blotters_flex_vs_classic_per_month_chart.py");
-    var psi = new ProcessStartInfo("python",
-        $"\"{script}\" \"{csvPath}\" \"{pngPath}\"")
-    {
-        RedirectStandardError = true,
-        UseShellExecute       = false
-    };
-
-    using var proc = Process.Start(psi)
-                  ?? throw new InvalidOperationException(
-                         "Could not start Python");
-    var err = await proc.StandardError.ReadToEndAsync();
-    await proc.WaitForExitAsync();
-    if (!string.IsNullOrWhiteSpace(err))
-        _log.LogError("Python error: {Err}", err);
-
-    return $"/charts/{Path.GetFileName(pngPath)}";
-}
-```
-
----
-
-### 4. Python script: pivot both lines
-
-```python
-# generate_blotters_flex_vs_classic_per_month_chart.py
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
 def main(inp, outp):
+    # Load and parse dates
     df = pd.read_csv(inp, parse_dates=['Month'])
+
+    # Keep only the Flex series
+    df = df[df['Flex'] == 'Flex'].sort_values('Month')
+
+    # Compute a 6-month exponential moving average of the Pct column
+    df['EMA_6M'] = df['Pct'].ewm(span=6, adjust=False).mean()
+
+    # Plot
     fig, ax = plt.subplots(figsize=(10,6))
     if df.empty:
-        ax.text(0.5,0.5,'No data to display',
+        ax.text(0.5, 0.5, 'No data to display',
                 ha='center', va='center', fontsize=14)
         ax.axis('off')
     else:
-        pivot = df.pivot(index='Month', columns='Flex', values='Pct').fillna(0)
-        for col in pivot.columns:
-            ax.plot(pivot.index, pivot[col], marker='o', label=col)
+        # Actual Flex %  
+        ax.plot(df['Month'], df['Pct'], 
+                marker='o', label='Actual')
+        # 6-month EMA  
+        ax.plot(df['Month'], df['EMA_6M'], 
+                label='6M EMA')
+        
         ax.set_xlabel('Month')
         ax.set_ylabel('Percent')
-        ax.legend(title='Flex/Classic')
+        ax.legend()
         ax.tick_params(axis='x', rotation=45)
         plt.tight_layout()
+
     plt.savefig(outp)
 
-if __name__ == '__main__':
+
+if __name__=='__main__':
     if len(sys.argv) != 3:
-        sys.exit("Usage: script <in.csv> <out.png>")
+        print("Usage: script <in.csv> <out.png>", file=sys.stderr)
+        sys.exit(1)
     main(sys.argv[1], sys.argv[2])
-```
-
----
-
-With these changes you’ll get **two distinct lines**—one for Flex and one for Classic—on your monthly chart. Give it a rebuild and you should see both series on the plot.
