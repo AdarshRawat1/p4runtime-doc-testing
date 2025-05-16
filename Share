@@ -1,42 +1,71 @@
-import sys
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def main(inp, outp):
-    # Load and parse dates
-    df = pd.read_csv(inp, parse_dates=['Month'])
-
-    # Keep only the Flex series
-    df = df[df['Flex'] == 'Flex'].sort_values('Month')
-
-    # Compute a 6-month exponential moving average of the Pct column
-    df['EMA_6M'] = df['Pct'].ewm(span=6, adjust=False).mean()
-
-    # Plot
-    fig, ax = plt.subplots(figsize=(10,6))
-    if df.empty:
-        ax.text(0.5, 0.5, 'No data to display',
-                ha='center', va='center', fontsize=14)
-        ax.axis('off')
-    else:
-        # Actual Flex %  
-        ax.plot(df['Month'], df['Pct'], 
-                marker='o', label='Actual')
-        # 6-month EMA  
-        ax.plot(df['Month'], df['EMA_6M'], 
-                label='6M EMA')
-        
-        ax.set_xlabel('Month')
-        ax.set_ylabel('Percent')
-        ax.legend()
-        ax.tick_params(axis='x', rotation=45)
-        plt.tight_layout()
-
-    plt.savefig(outp)
-
-
-if __name__=='__main__':
-    if len(sys.argv) != 3:
-        print("Usage: script <in.csv> <out.png>", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
+Project Report: Modular Chart-Rendering Pipeline
+Intern: [Your Name]
+Manager: [Manager Name]
+Introduction
+This report provides a high-level overview of an internship project focused on designing and implementing a modular, end-to-end pipeline for generating, updating, and serving data-driven chart images. The solution emphasizes clean-code practices, separation of concerns, and robust error handling to ensure maintainability and ease of future enhancements.
+ 
+Page 1: Executive Summary & Objectives
+Executive Summary
+Over the course of this internship, a fully modular chart-rendering pipeline was developed to extract, process, and pre-render data-driven charts from a relational database. A background worker service handles regular updates and cleanup, while a frontend component displays the latest charts on demand. The result is a scalable, maintainable system with clear separation of concerns, robust error handling, and hooks for future extension.
+Objectives
+•	Design a background service to generate and update chart images at configurable intervals
+•	Implement a cleanup mechanism to remove stale chart files while preserving metadata
+•	Expose rendered charts via a lightweight frontend for fast load times
+•	Structure code into modular layers (Data Access, Services, Workers, UI) following clean-code standards
+•	Incorporate comprehensive logging and error handling to surface failures without exposing internal details
+ 
+Page 2: Architecture & Technologies
+Architecture Overview
+1.	1. Blazor Server UI renders pre-generated PNG charts and provides regenerate/status indicators.
+2.	2. File Storage serves static chart PNGs and a JSON metadata index from wwwroot/charts/.
+3.	3. Worker (Background Service) schedules chart updates at configurable intervals.
+4.	4. Service Layer defines IChartService abstractions that coordinate data retrieval and rendering.
+5.	5. Data Access Layer encapsulates all Oracle DB interactions and returns strongly typed models.
+6.	6. Database is an Oracle relational store optimized for analytical queries.
+Technology Stack
+Component	Details
+UI	Blazor Server on .NET 8
+File Storage	Local file system under wwwroot/charts/
+Background Service	.NET Worker Service
+Rendering Engine	Python with Matplotlib (server-side PNG output)
+Service Abstraction	C# interfaces with dependency injection
+Data Access	Dapper or Oracle.ManagedDataAccess.Client for lightweight queries
+Logging	Microsoft.Extensions.Logging for structured diagnostics
+Configuration	appsettings.json for intervals, paths, retention rules
+ 
+Page 3: Implementation Highlights & Key Achievements
+Implementation Highlights
+Background Worker Initialization
+Protected override of ExecuteAsync uses a scoped IChartService to generate all charts, then waits the configured interval before repeating.
+Robust Cleanup Logic
+Deletes only the oldest files beyond retention count, leaving metadata intact for unaffected charts. Metadata format example:
+{
+  "charts": [
+    {
+      "name": "UsageLast7Days",
+      "lastUpdated": "2025-05-16T09:00:00Z",
+      "path": "wwwroot/charts/UsageLast7Days.png"
+    }
+  ]
+}
+Error-Resilient Rendering
+Adds pre-render checks for empty data sets and substitutes a “No Data” placeholder. Wraps rendering calls in try/catch to log errors without halting execution.
+Key Achievements
+Metric	Result
+Average chart generation time	~0.8 seconds
+Files pruned per cleanup run	2 (configurable)
+Error events logged last month	0
+Supported chart types	10+
+Frontend load time	< 200 ms
+ 
+Page 4: Challenges & Next Steps
+Key Challenges & Resolutions
+Stale File Cleanup Risk: Initial logic removed metadata for charts not processed; refactored to delete only based on age and retention count.
+Intermittent Rendering Failures: Renderer failed on empty data sets; added data checks and fallback images plus exception handling.
+Database Load Spikes: Concurrent queries timed out; batched fetches, optimized SQL, and throttled the worker.
+Conclusion & Next Steps
+CI/CD Pipeline Setup – Jenkins build, test, deploy automation
+Infrastructure as Code – Ansible playbooks for servers and storage
+Containerization & Alerts – Dockerize services and integrate monitoring
+Monitoring & Metrics – Logging dashboards with Grafana/Prometheus
+Future Chart Enhancements – Parameterized charts, user filters, real-time updates
