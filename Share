@@ -1,1 +1,10 @@
+Backend-generated charts
+Instead of shipping heavy Plotly libraries to the browser, we now generate every graph on the server. Under the hood, each chart pulls data via OracleDataService, writes it out to a CSV, runs a simple Matplotlib script in Python, and saves the result as a PNG in /wwwroot/charts. Our Blazor <GraphBox> component then just displays that image—so pages load instantly, no bulky JavaScript required.
+Automatic updatesWe’ve wired up a background worker (ChartUpdaterWorker) to regenerate all charts on a schedule (hourly, nightly, etc.). Each step is wrapped in try/catch, errors are logged, and a “Last Updated” timestamp is recorded. This ensures our site remains highly reliable and fast, always showing fresh data without manual intervention.
+
+
+
+
+
+
 
