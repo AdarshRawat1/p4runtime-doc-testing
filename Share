@@ -1,163 +1,25 @@
-Below is an updated version of **GraphBox.razor** plus a companion **GraphBox.razor.css** that will give you the same look & feel as your reference image (dark‐navy header, white title & timestamp, bright blue button, rounded card with shadow, etc.).
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
----
-
-### GraphBox.razor
-
-```razor
-@using System.Net.Http.Json
-@inject HttpClient Http
-
-<div class="card mb-4 shadow-sm rounded graph-card">
-  <div class="graph-card-header">
-    <div class="d-flex flex-column">
-      <h5 class="graph-title">@Title</h5>
-      @if (meta != null)
-      {
-        <small class="graph-timestamp">
-          Last Updated: @meta.LastUpdated.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
-        </small>
-      }
-    </div>
-
-    <button class="btn btn-sm btn-refresh" @onclick="Refresh" disabled="@isLoading">
-      @if (isLoading)
-      {
-        <span class="spinner-border spinner-border-sm text-light me-2" role="status" aria-hidden="true"></span>
-      }
-      <span>@(isLoading ? "Refreshing..." : "Refresh")</span>
-    </button>
-  </div>
-
-  <div class="card-body p-3 text-center">
-    @if (isLoading)
+var host = Host.CreateDefaultBuilder(args)
+    .ConfigureLogging(logging =>
     {
-      <p class="text-secondary my-5">Loading chart…</p>
-    }
-    else if (!string.IsNullOrEmpty(error))
+        logging.ClearProviders();  
+
+        // enable simple console with IST timestamps and colors
+        logging.AddSimpleConsole(options =>
+        {
+            options.IncludeScopes   = false;
+            options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss 'IST'] ";
+            options.UseUtcTimestamp = false;               // use local (IST) time
+            options.ColorBehavior   = LoggerColorBehavior.Enabled;
+        });
+    })
+    .ConfigureServices((ctx, services) =>
     {
-      <div class="alert alert-danger mb-0">@error</div>
-    }
-    else if (meta != null)
-    {
-      <img src="@($"{meta.ImageUrl}?t={meta.LastUpdated.Ticks}")"
-           class="img-fluid rounded"
-           alt="@Title" />
-    }
-  </div>
-</div>
+        // your existing registrations…
+        services.AddHostedService<ChartUpdaterWorker>();
+    })
+    .Build();
 
-@code {
-  [Parameter] public string GraphId { get; set; }
-  [Parameter] public string Title   { get; set; }
-
-  private bool     isLoading;
-  private string   error;
-  private ChartMeta meta;
-
-  protected override async Task OnInitializedAsync() =>
-    await LoadMetadata();
-
-  private async Task LoadMetadata()
-  {
-    isLoading = true;
-    error     = null;
-    try
-    {
-      var dict = await Http.GetFromJsonAsync<Dictionary<string,ChartMeta>>("charts/metadata.json");
-      if (dict != null && dict.TryGetValue(GraphId, out var m))
-        meta = m;
-      else
-        error = $"No metadata found for '{GraphId}'";
-    }
-    catch (Exception ex)
-    {
-      error = ex.Message;
-    }
-    finally
-    {
-      isLoading = false;
-    }
-  }
-
-  private async Task Refresh()
-  {
-    isLoading = true;
-    error     = null;
-    try
-    {
-      var resp = await Http.PostAsync($"/api/charts/{GraphId}/refresh", null);
-      resp.EnsureSuccessStatusCode();
-      meta = await resp.Content.ReadFromJsonAsync<ChartMeta>();
-    }
-    catch (Exception ex)
-    {
-      error = ex.Message;
-    }
-    finally
-    {
-      isLoading = false;
-    }
-  }
-
-  public class ChartMeta
-  {
-    public string   ImageUrl    { get; set; }
-    public DateTime LastUpdated { get; set; }
-  }
-}
-```
-
----
-
-### GraphBox.razor.css
-
-```css
-.graph-card {
-  border: none; /* we’re using our own header styling */
-}
-
-.graph-card-header {
-  background-color: #1F2937;
-  padding: 0.75rem 1rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-top-left-radius: 0.5rem;
-  border-top-right-radius: 0.5rem;
-  border-bottom: none;
-  color: #FFFFFF;
-}
-
-.graph-title {
-  margin: 0;
-  font-size: 1.125rem;    /* ~18px */
-  font-weight: 600;
-}
-
-.graph-timestamp {
-  margin-top: 0.25rem;
-  font-size: 0.75rem;     /* ~12px */
-  color: rgba(255,255,255,0.7);
-}
-
-.btn-refresh {
-  background-color: #2563EB;  /* blue-600 */
-  border: none;
-  color: #FFFFFF;
-}
-
-.btn-refresh:disabled {
-  opacity: 0.6;
-}
-```
-
-#### What changed?
-
-1. **Header markup**: switched to a two‐line flex column for title + timestamp.
-2. **Colors & sizing**: dark‐navy background, white text, 18px title, 12px timestamp.
-3. **Button**: solid blue (`#2563EB`), white text, same shape as screenshot.
-4. **CSS isolation**: put all overrides in `GraphBox.razor.css` so they scope automatically to this component.
-
-Add those two files to your project (next to each other) and you’ll get a card just like your reference image. Let me know if you need any tweaks!
-
+await host.RunAsync();
