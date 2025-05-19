@@ -1,25 +1,48 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using StarTrends.Services;
 
-var host = Host.CreateDefaultBuilder(args)
-    .ConfigureLogging(logging =>
-    {
-        logging.ClearProviders();  
+var builder = WebApplication.CreateBuilder(args);
 
-        // enable simple console with IST timestamps and colors
-        logging.AddSimpleConsole(options =>
-        {
-            options.IncludeScopes   = false;
-            options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss 'IST'] ";
-            options.UseUtcTimestamp = false;               // use local (IST) time
-            options.ColorBehavior   = LoggerColorBehavior.Enabled;
-        });
-    })
-    .ConfigureServices((ctx, services) =>
-    {
-        // your existing registrations…
-        services.AddHostedService<ChartUpdaterWorker>();
-    })
-    .Build();
+// ─── LOGGING CONFIGURATION ────────────────────────────────────────────────────
+builder.Logging.ClearProviders();  
+builder.Logging.AddSimpleConsole(options =>
+{
+    options.IncludeScopes   = false;
+    options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss 'IST'] ";
+    options.UseUtcTimestamp = false;               // false → use server local time (IST)
+    options.ColorBehavior   = LoggerColorBehavior.Enabled;
+});
+// ────────────────────────────────────────────────────────────────────────────────
 
-await host.RunAsync();
+builder.Services.AddRazorPages(options =>
+{
+    options.RootDirectory = "/Components/Pages";
+});
+
+builder.Services.AddScoped(sp =>
+{
+    var nav = sp.GetRequiredService<NavigationManager>();
+    return new HttpClient { BaseAddress = new Uri(nav.BaseUri) };
+});
+
+builder.Services.AddScoped<IOracleDataService, OracleDataService>();
+builder.Services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
+builder.Services.AddTransient<IChartRefresher, ProductTradesChartRefresher>();
+
+builder.Services.AddControllers();
+builder.Services.AddServerSideBlazor();
+
+var app = builder.Build();
+
+app.MapControllers();
+app.UseStaticFiles();
+app.UseRouting();
+app.MapRazorPages();
+app.MapBlazorHub();
+app.MapFallbackToPage("/_Host");
+
+app.Run();
