@@ -1,10 +1,76 @@
-Backend-generated charts
-Instead of shipping heavy Plotly libraries to the browser, we now generate every graph on the server. Under the hood, each chart pulls data via OracleDataService, writes it out to a CSV, runs a simple Matplotlib script in Python, and saves the result as a PNG in /wwwroot/charts. Our Blazor <GraphBox> component then just displays that image—so pages load instantly, no bulky JavaScript required.
-Automatic updatesWe’ve wired up a background worker (ChartUpdaterWorker) to regenerate all charts on a schedule (hourly, nightly, etc.). Each step is wrapped in try/catch, errors are logged, and a “Last Updated” timestamp is recorded. This ensures our site remains highly reliable and fast, always showing fresh data without manual intervention.
+@inject HttpClient Http
 
+<div class="card mb-4 shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center bg-primary text-white">
+    <div>
+      <h5 class="mb-0">@Title</h5>
+      <small class="text-white-50">Last Updated: @meta?.LastUpdated.ToLocalTime().ToString("g")</small>
+    </div>
+    <button class="btn btn-outline-light btn-sm" @onclick="Refresh">
+      <i class="oi oi-reload"></i> Refresh
+    </button>
+  </div>
 
+  <div class="card-body text-center" style="min-height:250px;">
+    @if (isLoading)
+    {
+      <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Loading…</span>
+      </div>
+    }
+    else if (loadError)
+    {
+      <div class="text-danger">Failed to load chart.</div>
+    }
+    else
+    {
+      <img src="@($"{meta.ImageUrl}?t={meta.LastUpdated.Ticks}")"
+           class="img-fluid"
+           alt="@Title" />
+    }
+  </div>
+</div>
 
+@code {
+  [Parameter] public string GraphId { get; set; }
+  [Parameter] public string Title   { get; set; }
 
+  record Meta(string ImageUrl, DateTime LastUpdated);
+  Meta meta;
+  bool isLoading;
+  bool loadError;
 
+  protected override async Task OnInitializedAsync()
+  {
+    await LoadMeta();
+  }
 
+  async Task Refresh()
+  {
+    await LoadMeta(force:true);
+  }
 
+  async Task LoadMeta(bool force = false)
+  {
+    try
+    {
+      isLoading = true;
+      loadError = false;
+      // append a cache-buster only on refresh
+      var url = force
+        ? $"charts/metadata.json?t={DateTime.UtcNow.Ticks}"
+        : "charts/metadata.json";
+      var all = await Http.GetFromJsonAsync<Dictionary<string, Meta>>(url);
+      meta = all[GraphId];
+    }
+    catch
+    {
+      loadError = true;
+    }
+    finally
+    {
+      isLoading = false;
+      StateHasChanged();
+    }
+  }
+}
