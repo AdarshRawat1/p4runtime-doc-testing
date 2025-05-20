@@ -4,11 +4,15 @@
 
 <PageTitle>STAR Usage Dashboard</PageTitle>
 
-<div class="container py-5">
-    <h1 class="display-5 fw-bold text-primary">STAR Usage Dashboard</h1>
-    <p class="lead">Live, auto-generated insights into STAR platform usage powered by Oracle + Python.</p>
+<div class="hero-section text-white py-5" style="background: linear-gradient(to right, #0d6efd, #6610f2);">
+    <div class="container">
+        <h1 class="display-4 fw-bold">STAR Usage Dashboard</h1>
+        <p class="lead">Live, auto-generated insights into STAR platform usage powered by Oracle + Python.</p>
+    </div>
+</div>
 
-    <section class="mt-5">
+<div class="container py-5">
+    <section class="mt-4">
         <h2 class="h4">📌 About This Portal</h2>
         <p>
             This dashboard presents real-time STAR usage metrics organized by category — Product, Trade, User, Performance, and more.
@@ -18,37 +22,47 @@
 
     <section class="mt-4">
         <h2 class="h4">🔄 How It Works</h2>
-        <div class="table-responsive">
-            <table class="table table-bordered table-striped">
-                <thead>
-                    <tr>
-                        <th>Step</th>
-                        <th>Description</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>🟢 Step 1</td>
-                        <td>Oracle SQL scripts are registered inside <code>OracleDataService</code> for each chart.</td>
-                    </tr>
-                    <tr>
-                        <td>🟡 Step 2</td>
-                        <td>A background worker <code>ChartUpdaterWorker</code> executes these queries and generates CSVs.</td>
-                    </tr>
-                    <tr>
-                        <td>🔵 Step 3</td>
-                        <td>Python scripts read the CSVs and render PNG charts using Matplotlib.</td>
-                    </tr>
-                    <tr>
-                        <td>🔴 Step 4</td>
-                        <td>Charts are saved in <code>wwwroot/charts/</code> with metadata.</td>
-                    </tr>
-                    <tr>
-                        <td>🟣 Step 5</td>
-                        <td>The frontend displays these images via Blazor components like <code>&lt;GraphBox&gt;</code>.</td>
-                    </tr>
-                </tbody>
-            </table>
+        <div class="row row-cols-1 row-cols-md-2 g-4">
+            <div class="col">
+                <div class="card step-card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">🟢 Step 1</h5>
+                        <p class="card-text">Oracle SQL scripts are registered inside <code>OracleDataService</code> for each chart.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card step-card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">🟡 Step 2</h5>
+                        <p class="card-text">A background worker <code>ChartUpdaterWorker</code> executes these queries and generates CSVs.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card step-card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">🔵 Step 3</h5>
+                        <p class="card-text">Python scripts read the CSVs and render PNG charts using Matplotlib.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card step-card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">🔴 Step 4</h5>
+                        <p class="card-text">Charts are saved in <code>wwwroot/charts/</code> with metadata.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card step-card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">🟣 Step 5</h5>
+                        <p class="card-text">The frontend displays these images via Blazor components like <code>&lt;GraphBox&gt;</code>.</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -58,7 +72,7 @@
             @foreach (var category in new[] { "Product", "Trade", "User", "Performance", "Usage", "Fixings" })
             {
                 <div class="col-md-4">
-                    <div class="card h-100 border-primary">
+                    <div class="card h-100 card-hover-effect">
                         <div class="card-body">
                             <h5 class="card-title">@category</h5>
                             <p class="card-text">View all charts related to @category.ToLower() metrics.</p>
@@ -85,7 +99,32 @@
         </p>
     </section>
 
-    <footer class="mt-5 pt-4 border-top text-muted small">
-        &copy; 2025 STAR Trends Dashboard – Built with .NET 8 · Oracle · Python · Blazor
+    <footer class="mt-5 pt-4 border-top text-muted small text-center" style="color: #6c757d;">
+        &copy; 2025 <span class="text-primary">STAR Trends Dashboard</span> – Built with .NET 8 · Oracle · Python · Blazor
     </footer>
 </div>
+
+<style>
+.card-hover-effect {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    border: 1px solid #0d6efd;
+    border-radius: 0.5rem;
+}
+
+.card-hover-effect:hover {
+    transform: translateY(-5px) scale(1.02);
+    box-shadow: 0 8px 16px rgba(13, 110, 253, 0.25);
+    border-color: #0a58ca;
+}
+
+.step-card {
+    border-left: 5px solid #0d6efd;
+    border-radius: 0.5rem;
+    background-color: #f8f9fa;
+    transition: background-color 0.3s ease;
+}
+
+.step-card:hover {
+    background-color: #e2e6ea;
+}
+</style>
