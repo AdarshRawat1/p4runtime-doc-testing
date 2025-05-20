@@ -1,48 +1,91 @@
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Components;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using StarTrends.Services;
+@page "/"
+@using System.IO
+@inject IWebHostEnvironment Env
 
-var builder = WebApplication.CreateBuilder(args);
+<PageTitle>STAR Usage Dashboard</PageTitle>
 
-// ─── LOGGING CONFIGURATION ────────────────────────────────────────────────────
-builder.Logging.ClearProviders();  
-builder.Logging.AddSimpleConsole(options =>
-{
-    options.IncludeScopes   = false;
-    options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss 'IST'] ";
-    options.UseUtcTimestamp = false;               // false → use server local time (IST)
-    options.ColorBehavior   = LoggerColorBehavior.Enabled;
-});
-// ────────────────────────────────────────────────────────────────────────────────
+<div class="container py-5">
+    <h1 class="display-5 fw-bold text-primary">STAR Usage Dashboard</h1>
+    <p class="lead">Live, auto-generated insights into STAR platform usage powered by Oracle + Python.</p>
 
-builder.Services.AddRazorPages(options =>
-{
-    options.RootDirectory = "/Components/Pages";
-});
+    <section class="mt-5">
+        <h2 class="h4">📌 About This Portal</h2>
+        <p>
+            This dashboard presents real-time STAR usage metrics organized by category — Product, Trade, User, Performance, and more.
+            Data is sourced from Oracle, visualized using Python, and served as lightweight static images for instant loading.
+        </p>
+    </section>
 
-builder.Services.AddScoped(sp =>
-{
-    var nav = sp.GetRequiredService<NavigationManager>();
-    return new HttpClient { BaseAddress = new Uri(nav.BaseUri) };
-});
+    <section class="mt-4">
+        <h2 class="h4">🔄 How It Works</h2>
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped">
+                <thead>
+                    <tr>
+                        <th>Step</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>🟢 Step 1</td>
+                        <td>Oracle SQL scripts are registered inside <code>OracleDataService</code> for each chart.</td>
+                    </tr>
+                    <tr>
+                        <td>🟡 Step 2</td>
+                        <td>A background worker <code>ChartUpdaterWorker</code> executes these queries and generates CSVs.</td>
+                    </tr>
+                    <tr>
+                        <td>🔵 Step 3</td>
+                        <td>Python scripts read the CSVs and render PNG charts using Matplotlib.</td>
+                    </tr>
+                    <tr>
+                        <td>🔴 Step 4</td>
+                        <td>Charts are saved in <code>wwwroot/charts/</code> with metadata.</td>
+                    </tr>
+                    <tr>
+                        <td>🟣 Step 5</td>
+                        <td>The frontend displays these images via Blazor components like <code>&lt;GraphBox&gt;</code>.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
 
-builder.Services.AddScoped<IOracleDataService, OracleDataService>();
-builder.Services.AddScoped<IChartGeneratorService, ChartGeneratorService>();
-builder.Services.AddTransient<IChartRefresher, ProductTradesChartRefresher>();
+    <section class="mt-4">
+        <h2 class="h4">📊 Explore Chart Categories</h2>
+        <div class="row g-3">
+            @foreach (var category in new[] { "Product", "Trade", "User", "Performance", "Usage", "Fixings" })
+            {
+                <div class="col-md-4">
+                    <div class="card h-100 border-primary">
+                        <div class="card-body">
+                            <h5 class="card-title">@category</h5>
+                            <p class="card-text">View all charts related to @category.ToLower() metrics.</p>
+                            <a href="/@category.ToLower()" class="btn btn-outline-primary">Explore</a>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </section>
 
-builder.Services.AddControllers();
-builder.Services.AddServerSideBlazor();
+    <section class="mt-5">
+        <h2 class="h4">⏱️ Last Updated</h2>
+        <p>The "Last Updated" time for each graph is displayed on the graph box. Clicking <strong>Refresh</strong> reloads the PNG without triggering regeneration.</p>
+    </section>
 
-var app = builder.Build();
+    <section class="mt-5">
+        <h2 class="h4">🛠 Developer Note</h2>
+        <p>
+            All charts are managed via backend configuration. SQL scripts live in <code>OracleDataService</code>, rendered by Python, and saved as static PNGs under <code>wwwroot/charts/</code>.
+        </p>
+        <p>
+            Updates are handled via background services — no manual script runs, CLI, or Bitbucket integrations.
+        </p>
+    </section>
 
-app.MapControllers();
-app.UseStaticFiles();
-app.UseRouting();
-app.MapRazorPages();
-app.MapBlazorHub();
-app.MapFallbackToPage("/_Host");
-
-app.Run();
+    <footer class="mt-5 pt-4 border-top text-muted small">
+        &copy; 2025 STAR Trends Dashboard – Built with .NET 8 · Oracle · Python · Blazor
+    </footer>
+</div>
